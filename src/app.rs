@@ -191,26 +191,26 @@ impl App {
 
         // Add a distinctive separator between different commands
         self.add_output("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n".to_string());
-        
+
         // Always format and display the command first, before any processing happens
         match mode {
             CommandMode::Bash => self.add_output(format!("$ {}", command)),
             CommandMode::Command => self.add_output(format!("/ {}", command)),
             CommandMode::AI => self.add_output(format!("❯ {}", command)),
         };
-        
+
         // Force immediate UI refresh to show the command right away
         if let Err(e) = tui.immediate_refresh(|f| {
-            ui::render(f, self); 
+            ui::render(f, self);
         }) {
             eprintln!("Failed to refresh UI: {}", e);
         }
-        
+
         match mode {
             CommandMode::Bash => {
                 // Add a newline for better readability
                 self.add_output("\n".to_string());
-                
+
                 // Now execute the command
                 let result = bash::handle_bash_command(&cmd)
                     .unwrap_or_else(|e| format!("Error: {}", e));
@@ -220,7 +220,7 @@ impl App {
             CommandMode::Command => {
                 // Add a newline for better readability
                 self.add_output("\n".to_string());
-                
+
                 // Handle special cases
                 if &cmd == "clear" {
                     self.output = "🚀 Output cleared\n".to_string();
@@ -242,145 +242,64 @@ impl App {
             CommandMode::AI => {
                 // Add a space for the spinner indicator (no extra newline)
                 self.add_output(" ".to_string());
-                
+
                 // Immediately refresh UI to show the space for the spinner
                 if let Err(e) = tui.immediate_refresh(|f| {
-                    ui::render(f, self); 
+                    ui::render(f, self);
                 }) {
                     eprintln!("Failed to refresh UI: {}", e);
                 }
-                
-                let spinner_line_index = self.output_lines.len() - 1;
-                // Initialize with a spinner character and "Processing..." text
-                self.output_lines[spinner_line_index] = "⠋ Processing query...".to_string();
-                
-                // Immediately refresh UI again to show the spinner
-                if let Err(e) = tui.immediate_refresh(|f| {
-                    ui::render(f, self); 
-                }) {
-                    eprintln!("Failed to refresh UI: {}", e);
-                }
-                
-                // Instead of using the spinner library directly, we'll manually update the spinner characters
-                // in our output area during the tick events
-                let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-                let mut frame_index = 0;
-                
-                // Create a channel for spinner updates
+
+                // Start spinner animation
                 let (tx, rx) = mpsc::channel();
-                
-                // Store the receiver for updates
                 self.spinner_rx = Some(rx);
-                
-                // Create a separate sender for the thread to use
-                let tx_thread = tx.clone();
-                
-                // Create a thread to update the spinner in the output area
-                let spinner_line_index_clone = spinner_line_index;
-                
-                // Spawn thread to update spinner - immediately starts working
-                std::thread::spawn(move || {
-                    // Small initial delay to ensure first message is clearly visible
-                    std::thread::sleep(std::time::Duration::from_millis(200));
-                    
+
+                // Spawn spinner task
+                let spinner_task = tokio::spawn(async move {
+                    let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+                    let mut frame = 0;
                     loop {
-                        // Prepare the spinner frame with clear indication of processing
-                        let frame = format!("{} Processing query...", spinner_frames[frame_index]);
-                        
-                        // Send the current frame
-                        if tx_thread.send((frame, spinner_line_index_clone)).is_err() {
+                        if tx.send((spinner_frames[frame].to_string(), frame)).is_err() {
                             break;
                         }
-                        
-                        // Move to next frame
-                        frame_index = (frame_index + 1) % spinner_frames.len();
-                        
-                        // Sleep for a short duration - not too fast, not too slow
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        frame = (frame + 1) % spinner_frames.len();
+                        tokio::time::sleep(Duration::from_millis(80)).await;
                     }
                 });
 
-                // Call the AI handler
+                // Generate AI response
                 match self.ai_handler.generate(&cmd).await {
                     Ok(response) => {
-                        // Signal the spinner thread to stop
-                        drop(tx);
-                        
-                        // Drop the receiver to stop receiving updates
+                        // Stop spinner
+                        spinner_task.abort();
                         self.spinner_rx = None;
-                        
-                        // Clear the spinner line
-                        if spinner_line_index < self.output_lines.len() {
-                            self.output_lines.remove(spinner_line_index);
-                            // Rebuild the output string
-                            self.output = self.output_lines.join("\n");
-                            if !self.output.is_empty() {
-                                self.output.push('\n');
-                            }
-                        }
-                        
+
+                        // Add a newline after the spinner space
+                        self.add_output("\n".to_string());
+
+                        // Add the processed response
+                        self.add_output(response.content);
+
                         // Update stats
                         self.stats.ai_count += 1;
-                        self.stats.total_tokens = self.stats.total_tokens
-                            .checked_add(response.usage.total_tokens)
-                            .unwrap_or(self.stats.total_tokens);
-                            
-                        // Update prompt and completion tokens in SessionStats
-                        self.stats.prompt_tokens = self.stats.prompt_tokens
-                            .checked_add(response.usage.prompt_tokens)
-                            .unwrap_or(self.stats.prompt_tokens);
-                            
-                        self.stats.completion_tokens = self.stats.completion_tokens
-                            .checked_add(response.usage.completion_tokens)
-                            .unwrap_or(self.stats.completion_tokens);
-                        
-                        // Get correct model costs based on the model
-                        let model_costs = self.ai_handler.get_model_costs(&response.model).await;
-                        
-                        // Calculate input cost
-                        let input_cost = (response.usage.prompt_tokens as f64 / 1000.0) * model_costs.prompt_cost_per_1k;
-                        
-                        // Calculate output cost
-                        let output_cost = (response.usage.completion_tokens as f64 / 1000.0) * model_costs.completion_cost_per_1k;
-                        
-                        // Update total cost
-                        self.stats.cost += input_cost + output_cost;
-                        
-                        // Add the AI response (without extra newline)
-                        self.add_output(response.content);
+                        self.stats.prompt_tokens += response.usage.prompt_tokens;
+                        self.stats.completion_tokens += response.usage.completion_tokens;
+                        self.stats.total_tokens += response.usage.total_tokens;
+
+                        // Calculate and update cost
+                        let costs = self.ai_handler.get_model_costs(&response.model).await;
+                        self.stats.cost += costs.calculate_cost(&response.usage);
                     }
                     Err(e) => {
-                        // Signal the spinner thread to stop
-                        drop(tx);
-                        
-                        // Drop the receiver to stop receiving updates
+                        // Stop spinner
+                        spinner_task.abort();
                         self.spinner_rx = None;
-                        
-                        // Clear the spinner line
-                        if spinner_line_index < self.output_lines.len() {
-                            self.output_lines.remove(spinner_line_index);
-                            // Rebuild the output string
-                            self.output = self.output_lines.join("\n");
-                            if !self.output.is_empty() {
-                                self.output.push('\n');
-                            }
-                        }
-                        
-                        // More user-friendly error message with cleaner formatting
-                        match e {
-                            AIError::NetworkError(msg) if msg.contains("Ollama not available") => {
-                                self.add_output(format!("❌ Ollama service not running
-• Start with 'ollama serve'
-• Install from https://ollama.com if needed"));
-                            },
-                            AIError::APIError(msg) if msg.contains("operation timed out") => {
-                                self.add_output(format!("❌ Connection to Ollama timed out
-• Model may still be loading
-• System resources might be limited
-• Try again or use a smaller model"));
-                            },
-                            _ => self.add_output(format!("❌ {}", e))
-                        }
+
+                        // Add a newline after the spinner space
+                        self.add_output("\n".to_string());
+
+                        // Add error message
+                        self.add_output(format!("Error: {}\n", e));
                     }
                 }
             }
@@ -613,7 +532,7 @@ impl App {
         self.native_selection_mode = !self.native_selection_mode;
         Ok(())
     }
-    
+
     // Get formatted session cost information for the /cost command
     pub fn get_session_cost_info(&self) -> String {
         // Calculate individual costs
@@ -651,15 +570,15 @@ impl App {
     pub fn update_cursor_blink(&mut self) {
         // Blink cursor every 500ms
         const CURSOR_BLINK_RATE_MS: u128 = 500;
-        
+
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_cursor_toggle).as_millis();
-        
+
         if elapsed >= CURSOR_BLINK_RATE_MS {
             self.cursor_visible = !self.cursor_visible;
             self.last_cursor_toggle = now;
         }
-        
+
         // Check if we received any spinner update from the background thread
         let mut updated = false;
         if let Some(rx) = &self.spinner_rx {
@@ -668,25 +587,25 @@ impl App {
             while let Ok((frame, line_index)) = rx.try_recv() {
                 latest_update = Some((frame, line_index));
             }
-            
+
             // If we got any updates, apply the latest one
             if let Some((frame, line_index)) = latest_update {
                 // Update the spinner in the output area
                 if line_index < self.output_lines.len() {
                     // Update the line with the new spinner frame
                     self.output_lines[line_index] = frame;
-                    
+
                     // Rebuild the output string to reflect the spinner update
                     self.output = self.output_lines.join("\n");
                     if !self.output.is_empty() {
                         self.output.push('\n');
                     }
-                    
+
                     updated = true;
                 }
             }
         }
-        
+
         // If we made changes, trigger a redraw
         if updated {
             // The redraw will happen on the next tick naturally

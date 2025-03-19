@@ -1,5 +1,5 @@
 //! Bash command handler
-//! 
+//!
 //! This module handles execution of bash commands and provides
 //! security controls and formatting of outputs.
 
@@ -26,11 +26,11 @@ const RESTRICTED_COMMANDS: [&str; 12] = [
 
 /// List of potentially dangerous patterns that should be blocked
 const DANGEROUS_PATTERNS: [&str; 8] = [
-    "rm -rf", 
-    "mkfs", 
-    "dd if=/dev/zero", 
-    "chmod -R 777", 
-    ":(){ ", 
+    "rm -rf",
+    "mkfs",
+    "dd if=/dev/zero",
+    "chmod -R 777",
+    ":(){ ",
     "fork bomb",
     "wget",   // External download tools
     "curl",   // External download tools
@@ -81,7 +81,28 @@ pub fn handle_bash_command(command: &str) -> HandlerResult<String> {
     // Execute and time the command
     let start_time = Instant::now();
 
-    // Split command into parts for execution
+    // For commands that use shell patterns, use the shell to interpret them
+    if command.contains('*') || command.contains('?') || command.contains('[') {
+        let result = Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .current_dir(std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| {
+                HandlerError::Bash(format!("Failed to execute command: {}", e))
+            })?;
+
+        let elapsed = start_time.elapsed();
+        let exit_code = result.status.code().unwrap_or(-1);
+        let stdout = String::from_utf8_lossy(&result.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&result.stderr).to_string();
+
+        return Ok(format_command_output(command, exit_code, &stdout, &stderr, elapsed.as_secs_f64()));
+    }
+
+    // For other commands, use direct execution
     let cmd_parts: Vec<String> = shell_words::split(command)
         .map_err(|e| HandlerError::Parse(format!("Failed to parse command: {}", e)))?;
 
@@ -89,37 +110,34 @@ pub fn handle_bash_command(command: &str) -> HandlerResult<String> {
         return Err(HandlerError::Parse("Invalid command format".to_string()));
     }
 
-    // Execute command with a 30 second timeout
     let result = Command::new(&cmd_parts[0])
         .args(&cmd_parts[1..])
+        .current_dir(std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
         .map_err(|e| {
             HandlerError::Bash(format!("Failed to execute command: {}", e))
         })?;
-    
-    let elapsed = start_time.elapsed();
 
-    // Process the command output
+    let elapsed = start_time.elapsed();
     let exit_code = result.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&result.stdout).to_string();
     let stderr = String::from_utf8_lossy(&result.stderr).to_string();
 
-    // Format the output nicely
     Ok(format_command_output(command, exit_code, &stdout, &stderr, elapsed.as_secs_f64()))
 }
 
 /// Format command output with proper style and information
 fn format_command_output(
     _command: &str, // Not used in the new format but kept for backwards compatibility
-    return_code: i32, 
-    stdout: &str, 
-    stderr: &str, 
+    return_code: i32,
+    stdout: &str,
+    stderr: &str,
     execution_time: f64
 ) -> String {
     // Compact header with metadata
-    let mut result = format!("[⏱️ {:.2}s | {} | 📊 {}]\n", 
+    let mut result = format!("[⏱️ {:.2}s | {} | 📊 {}]\n",
         execution_time,
         if return_code == 0 { "✓" } else { "✗" },
         return_code
