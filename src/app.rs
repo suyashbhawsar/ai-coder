@@ -8,11 +8,13 @@ use std::env;
 use std::path::PathBuf;
 use std::io;
 use crossterm::event::{KeyCode, KeyModifiers};
+use std::sync::mpsc;
 
 use crate::event::Event;
 use crate::tui::Tui;
 use crate::handlers::CommandMode;
 use crate::utils::Colors;
+use crate::ui;
 
 mod ai_handler;
 use ai_handler::AIHandler;
@@ -107,6 +109,7 @@ pub struct App {
     pub native_selection_mode: bool,
     pub is_scrolling: bool, // Track when scrolling is in progress
     pub ai_handler: AIHandler,
+    pub spinner_rx: Option<mpsc::Receiver<(String, usize)>>, // Receiver for spinner updates
 }
 
 impl Default for App {
@@ -140,6 +143,7 @@ impl Default for App {
             native_selection_mode: true,
             is_scrolling: false, // Initialize scrolling state
             ai_handler: AIHandler::new(),
+            spinner_rx: None // Initialize spinner receiver as None
         }
     }
 }
@@ -163,7 +167,7 @@ impl App {
     }
 
     pub fn format_timestamp(&self) -> String {
-        format!("[{}]", Local::now().format("%H:%M:%S"))
+        Local::now().format("%H:%M").to_string()
     }
 
     pub fn detect_mode(&self, command: &str) -> (CommandMode, String) {
@@ -178,24 +182,45 @@ impl App {
         }
     }
 
-    pub async fn execute_command(&mut self, command: String) {
+    pub async fn execute_command(&mut self, command: String, tui: &mut Tui) {
         // Add command to history
         self.history.add(command.clone());
 
         // Detect mode and get processed command
         let (mode, cmd) = self.detect_mode(&command);
 
-        // Add timestamp and command to output
-        self.add_output(format!("{} {}", self.format_timestamp(), command));
-
+        // Add a distinctive separator between different commands
+        self.add_output("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n".to_string());
+        
+        // Always format and display the command first, before any processing happens
+        match mode {
+            CommandMode::Bash => self.add_output(format!("$ {}", command)),
+            CommandMode::Command => self.add_output(format!("/ {}", command)),
+            CommandMode::AI => self.add_output(format!("❯ {}", command)),
+        };
+        
+        // Force immediate UI refresh to show the command right away
+        if let Err(e) = tui.immediate_refresh(|f| {
+            ui::render(f, self); 
+        }) {
+            eprintln!("Failed to refresh UI: {}", e);
+        }
+        
         match mode {
             CommandMode::Bash => {
+                // Add a newline for better readability
+                self.add_output("\n".to_string());
+                
+                // Now execute the command
                 let result = bash::handle_bash_command(&cmd)
                     .unwrap_or_else(|e| format!("Error: {}", e));
                 self.add_output(result);
                 self.stats.bash_count += 1;
             }
             CommandMode::Command => {
+                // Add a newline for better readability
+                self.add_output("\n".to_string());
+                
                 // Handle special cases
                 if &cmd == "clear" {
                     self.output = "🚀 Output cleared\n".to_string();
@@ -215,12 +240,85 @@ impl App {
                 self.stats.command_count += 1;
             }
             CommandMode::AI => {
-                // Add thinking indicator
-                self.add_output("⏳ Processing...".to_string());
+                // Add a space for the spinner indicator (no extra newline)
+                self.add_output(" ".to_string());
+                
+                // Immediately refresh UI to show the space for the spinner
+                if let Err(e) = tui.immediate_refresh(|f| {
+                    ui::render(f, self); 
+                }) {
+                    eprintln!("Failed to refresh UI: {}", e);
+                }
+                
+                let spinner_line_index = self.output_lines.len() - 1;
+                // Initialize with a spinner character and "Processing..." text
+                self.output_lines[spinner_line_index] = "⠋ Processing query...".to_string();
+                
+                // Immediately refresh UI again to show the spinner
+                if let Err(e) = tui.immediate_refresh(|f| {
+                    ui::render(f, self); 
+                }) {
+                    eprintln!("Failed to refresh UI: {}", e);
+                }
+                
+                // Instead of using the spinner library directly, we'll manually update the spinner characters
+                // in our output area during the tick events
+                let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+                let mut frame_index = 0;
+                
+                // Create a channel for spinner updates
+                let (tx, rx) = mpsc::channel();
+                
+                // Store the receiver for updates
+                self.spinner_rx = Some(rx);
+                
+                // Create a separate sender for the thread to use
+                let tx_thread = tx.clone();
+                
+                // Create a thread to update the spinner in the output area
+                let spinner_line_index_clone = spinner_line_index;
+                
+                // Spawn thread to update spinner - immediately starts working
+                std::thread::spawn(move || {
+                    // Small initial delay to ensure first message is clearly visible
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    
+                    loop {
+                        // Prepare the spinner frame with clear indication of processing
+                        let frame = format!("{} Processing query...", spinner_frames[frame_index]);
+                        
+                        // Send the current frame
+                        if tx_thread.send((frame, spinner_line_index_clone)).is_err() {
+                            break;
+                        }
+                        
+                        // Move to next frame
+                        frame_index = (frame_index + 1) % spinner_frames.len();
+                        
+                        // Sleep for a short duration - not too fast, not too slow
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                });
 
                 // Call the AI handler
                 match self.ai_handler.generate(&cmd).await {
                     Ok(response) => {
+                        // Signal the spinner thread to stop
+                        drop(tx);
+                        
+                        // Drop the receiver to stop receiving updates
+                        self.spinner_rx = None;
+                        
+                        // Clear the spinner line
+                        if spinner_line_index < self.output_lines.len() {
+                            self.output_lines.remove(spinner_line_index);
+                            // Rebuild the output string
+                            self.output = self.output_lines.join("\n");
+                            if !self.output.is_empty() {
+                                self.output.push('\n');
+                            }
+                        }
+                        
                         // Update stats
                         self.stats.ai_count += 1;
                         self.stats.total_tokens = self.stats.total_tokens
@@ -248,27 +346,40 @@ impl App {
                         // Update total cost
                         self.stats.cost += input_cost + output_cost;
                         
-                        // Note: Token usage logging has been removed as requested
-                        
-                        // Remove the thinking indicator and add response
+                        // Add the AI response (without extra newline)
                         self.add_output(response.content);
                     }
                     Err(e) => {
-                        // More user-friendly error message
+                        // Signal the spinner thread to stop
+                        drop(tx);
+                        
+                        // Drop the receiver to stop receiving updates
+                        self.spinner_rx = None;
+                        
+                        // Clear the spinner line
+                        if spinner_line_index < self.output_lines.len() {
+                            self.output_lines.remove(spinner_line_index);
+                            // Rebuild the output string
+                            self.output = self.output_lines.join("\n");
+                            if !self.output.is_empty() {
+                                self.output.push('\n');
+                            }
+                        }
+                        
+                        // More user-friendly error message with cleaner formatting
                         match e {
                             AIError::NetworkError(msg) if msg.contains("Ollama not available") => {
-                                self.add_output("❌ Error: Ollama service not running. Please start Ollama with 'ollama serve' command.".to_string());
-                                self.add_output("📝 If you don't have Ollama installed, visit https://ollama.com to download and install it.".to_string());
+                                self.add_output(format!("❌ Ollama service not running
+• Start with 'ollama serve'
+• Install from https://ollama.com if needed"));
                             },
                             AIError::APIError(msg) if msg.contains("operation timed out") => {
-                                self.add_output("❌ Error: Connection to Ollama timed out.".to_string());
-                                self.add_output("📝 This may happen if:".to_string());
-                                self.add_output("  • The model is still loading (especially first use)".to_string());
-                                self.add_output("  • Your system is low on RAM or GPU resources".to_string());
-                                self.add_output("  • Ollama is processing another request".to_string());
-                                self.add_output("Try again in a moment or use a smaller model.".to_string());
+                                self.add_output(format!("❌ Connection to Ollama timed out
+• Model may still be loading
+• System resources might be limited
+• Try again or use a smaller model"));
                             },
-                            _ => self.add_output(format!("❌ Error: {}", e))
+                            _ => self.add_output(format!("❌ {}", e))
                         }
                     }
                 }
@@ -536,7 +647,7 @@ impl App {
         )
     }
 
-    // Update cursor blink state
+    // Update cursor blink state and handle spinner updates if needed
     pub fn update_cursor_blink(&mut self) {
         // Blink cursor every 500ms
         const CURSOR_BLINK_RATE_MS: u128 = 500;
@@ -547,6 +658,38 @@ impl App {
         if elapsed >= CURSOR_BLINK_RATE_MS {
             self.cursor_visible = !self.cursor_visible;
             self.last_cursor_toggle = now;
+        }
+        
+        // Check if we received any spinner update from the background thread
+        let mut updated = false;
+        if let Some(rx) = &self.spinner_rx {
+            // Process all pending updates, but only take the latest one
+            let mut latest_update = None;
+            while let Ok((frame, line_index)) = rx.try_recv() {
+                latest_update = Some((frame, line_index));
+            }
+            
+            // If we got any updates, apply the latest one
+            if let Some((frame, line_index)) = latest_update {
+                // Update the spinner in the output area
+                if line_index < self.output_lines.len() {
+                    // Update the line with the new spinner frame
+                    self.output_lines[line_index] = frame;
+                    
+                    // Rebuild the output string to reflect the spinner update
+                    self.output = self.output_lines.join("\n");
+                    if !self.output.is_empty() {
+                        self.output.push('\n');
+                    }
+                    
+                    updated = true;
+                }
+            }
+        }
+        
+        // If we made changes, trigger a redraw
+        if updated {
+            // The redraw will happen on the next tick naturally
         }
     }
 
@@ -590,7 +733,7 @@ impl App {
                                     if !command.is_empty() {
                                         self.input.clear();
                                         self.cursor_position = 0;
-                                        self.execute_command(command).await;
+                                        self.execute_command(command, tui).await;
                                     }
                                 }
                             }

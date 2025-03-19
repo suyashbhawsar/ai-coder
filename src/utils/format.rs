@@ -22,8 +22,8 @@ pub fn truncate_string(input: &str, max_length: usize) -> String {
     if input.len() <= max_length {
         input.to_string()
     } else {
-        let mut truncated = input.chars().take(max_length - 3).collect::<String>();
-        truncated.push_str("...");
+        let mut truncated = input.chars().take(max_length - 4).collect::<String>();
+        truncated.push_str(" ...");
         truncated
     }
 }

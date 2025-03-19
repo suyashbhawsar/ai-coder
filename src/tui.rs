@@ -18,6 +18,14 @@ pub struct Tui {
     raw_mode_enabled: bool,
 }
 
+impl Clone for Tui {
+    fn clone(&self) -> Self {
+        // This is a shallow clone just to satisfy the compiler
+        // We're not actually cloning the terminal
+        panic!("Tui should not be cloned - this is just to satisfy the compiler");
+    }
+}
+
 impl Tui {
     pub fn new(tick_rate: u64) -> io::Result<Self> {
         let mut stdout = stdout();
@@ -36,6 +44,17 @@ impl Tui {
             events,
             raw_mode_enabled: true,
         })
+    }
+    
+    // Force an immediate redraw of the UI
+    pub fn immediate_refresh<F>(&mut self, f: F) -> io::Result<()>
+    where
+        F: FnOnce(&mut Frame),
+    {
+        self.terminal.draw(f)?;
+        // Ensure the terminal flushes the buffer
+        self.terminal.backend_mut().flush()?;
+        Ok(())
     }
 
     pub fn terminal(&mut self) -> &mut Terminal<CrosstermBackend<io::Stdout>> {

@@ -95,8 +95,10 @@ pub fn handle_bash_command(command: &str) -> HandlerResult<String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .map_err(|e| HandlerError::Bash(format!("Failed to execute command: {}", e)))?;
-
+        .map_err(|e| {
+            HandlerError::Bash(format!("Failed to execute command: {}", e))
+        })?;
+    
     let elapsed = start_time.elapsed();
 
     // Process the command output
@@ -110,38 +112,37 @@ pub fn handle_bash_command(command: &str) -> HandlerResult<String> {
 
 /// Format command output with proper style and information
 fn format_command_output(
-    command: &str, 
+    _command: &str, // Not used in the new format but kept for backwards compatibility
     return_code: i32, 
     stdout: &str, 
     stderr: &str, 
     execution_time: f64
 ) -> String {
-    // Prepare header
-    let mut result = format!("📎 Command: {}\n", command);
-    result.push_str(&format!("⏱️ Execution time: {:.2}s\n", execution_time));
-    result.push_str(&format!("📊 Return code: {}\n", return_code));
+    // Compact header with metadata
+    let mut result = format!("[⏱️ {:.2}s | {} | 📊 {}]\n", 
+        execution_time,
+        if return_code == 0 { "✓" } else { "✗" },
+        return_code
+    );
 
-    // Add a separator
-    result.push_str(&format!("{}\n", "─".repeat(50)));
-
-    // Format output
+    // Format output with cleaner headers
     if !stdout.is_empty() {
-        result.push_str("📤 STDOUT:\n");
         result.push_str(stdout.trim_end());
         result.push('\n');
     }
 
     if !stderr.is_empty() {
         if !stdout.is_empty() {
-            result.push('\n');
+            result.push_str("\n⚠️ STDERR:\n");
+        } else {
+            result.push_str("⚠️ STDERR:\n");
         }
-        result.push_str("⚠️ STDERR:\n");
         result.push_str(stderr.trim_end());
         result.push('\n');
     }
 
     if stdout.is_empty() && stderr.is_empty() {
-        result.push_str("📄 No output\n");
+        result.push_str("(no output)\n");
     }
 
     result
