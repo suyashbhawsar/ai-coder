@@ -18,7 +18,6 @@ use crate::ui;
 
 mod ai_handler;
 use ai_handler::AIHandler;
-use crate::ai::AIError;
 
 pub type AppResult<T> = Result<T>;
 
@@ -234,9 +233,27 @@ impl App {
                     return;
                 }
 
-                let result = command::CommandHandler::handle_command(&cmd)
-                    .unwrap_or_else(|e| format!("Error: {}", e));
-                self.add_output(result);
+                // Execute command with robust error handling
+                match command::CommandHandler::handle_command(&cmd) {
+                    Ok(result) => {
+                        // Special handling for commands that might modify the AI client
+                        if cmd.starts_with("provider") || cmd.starts_with("model") {
+                            self.add_output(result.clone());
+                            
+                            // Attempt to update the AI client - log errors but don't crash
+                            if let Err(e) = self.ai_handler.update_client() {
+                                self.add_output(format!("⚠️ Warning: Could not update AI client: {}\n", e));
+                            } else {
+                                self.add_output("✅ AI client updated successfully\n".to_string());
+                            }
+                        } else {
+                            self.add_output(result);
+                        }
+                    },
+                    Err(e) => {
+                        self.add_output(format!("Error: {}", e));
+                    }
+                }
                 self.stats.command_count += 1;
             }
             CommandMode::AI => {

@@ -2,7 +2,7 @@
 //!
 //! This module is responsible for handling AI-related commands and interactions.
 
-use crate::ai::{AIClient, AIError, AIResponse, OllamaClient, ModelCosts};
+use crate::ai::{AIClient, AIError, AIResponse, OllamaClient, ModelCosts, AIClientFactory, Provider};
 use crate::config::get_config;
 use crate::handlers::HandlerResult;
 use std::sync::Arc;
@@ -25,16 +25,27 @@ impl Default for AIHandler {
 impl AIHandler {
     /// Create a new AI handler with configuration
     pub fn new() -> Self {
-        let config = get_config();
-        let client: Box<dyn AIClient> = match config.ai.provider.as_str() {
-            "ollama" => Box::new(OllamaClient::new(config.ai.model.clone())),
-            // Add more provider types as needed
-            _ => Box::new(OllamaClient::new("qwen2.5-coder".to_string())),
+        // Create client based on configuration
+        let client = match AIClientFactory::create_client() {
+            Ok(client) => client,
+            Err(e) => {
+                // Log the error and fall back to a default client
+                eprintln!("Failed to create AI client from config: {}", e);
+                Box::new(OllamaClient::new("qwen2.5-coder".to_string()))
+            }
         };
-
+        
         Self {
             client: Arc::new(Mutex::new(client)),
         }
+    }
+    
+    /// Update the client based on new configuration
+    pub fn update_client(&self) -> Result<(), AIError> {
+        let new_client = AIClientFactory::create_client()?;
+        let mut client = self.client.blocking_lock();
+        *client = new_client;
+        Ok(())
     }
 
     /// Generate a response for the given prompt
@@ -44,21 +55,18 @@ impl AIHandler {
 
         // Get the current configuration
         let config = get_config();
+        let model_config = config.ai.get_active_model_config();
 
         // If there's a system prompt set, use it
-        let context = config.ai.system_prompt.as_deref();
+        let context = model_config.system_prompt.as_deref();
 
         // Generate the response
         let client = self.client.lock().await;
         let response = client.generate(prompt, context).await?;
 
-        println!("Raw LLM response:\n{}", response.content);
-
         // Process the response for bash code blocks
         let processed_content = self.process_llm_output(&response.content).await
             .map_err(|e| AIError::InvalidResponse(format!("Failed to process bash blocks: {}", e)))?;
-
-        println!("Processed content:\n{}", processed_content);
 
         Ok(AIResponse {
             content: processed_content,
@@ -69,6 +77,7 @@ impl AIHandler {
     /// Check if the AI service is available
     async fn check_service_availability(&self) -> Result<(), AIError> {
         let config = get_config();
+        let provider = config.ai.active_provider;
 
         // Create a client with a short timeout for checking availability
         let client = Client::builder()
@@ -76,19 +85,43 @@ impl AIHandler {
             .build()
             .map_err(|e| AIError::NetworkError(format!("Failed to create HTTP client: {}", e)))?;
 
-        // Get the endpoint from config
-        let endpoint = match config.ai.provider.as_str() {
-            "ollama" => format!("{}/api/tags", config.ai.endpoint),
-            _ => format!("{}/api/tags", config.ai.endpoint),
-        };
-
-        // Try to connect
-        match client.get(&endpoint).send().await {
-            Ok(_) => Ok(()),
-            Err(e) => Err(AIError::NetworkError(format!(
-                "{} service not available: {}. Please ensure it's running.",
-                config.ai.provider, e
-            )))
+        match provider {
+            Provider::Ollama => {
+                // Try to connect to Ollama health endpoint
+                let endpoint = config.ai.ollama.endpoint.clone();
+                let health_url = format!("{}/api/tags", endpoint);
+                match client.get(&health_url).send().await {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(AIError::NetworkError(format!(
+                        "Ollama not available (is it running?): {}. Start Ollama with 'ollama serve' command.", e
+                    )))
+                }
+            },
+            Provider::OpenAI => {
+                // For OpenAI we just check if the API key is set
+                if config.ai.openai.api_key.is_empty() {
+                    return Err(AIError::Authentication("OpenAI API key is not set. Please update your configuration.".to_string()));
+                }
+                Ok(())
+            },
+            Provider::Anthropic => {
+                // For Anthropic we just check if the API key is set
+                if config.ai.anthropic.api_key.is_empty() {
+                    return Err(AIError::Authentication("Anthropic API key is not set. Please update your configuration.".to_string()));
+                }
+                Ok(())
+            },
+            Provider::LMStudio => {
+                // Check if LM Studio is running
+                let endpoint = config.ai.lmstudio.endpoint.clone();
+                let health_url = format!("{}/models", endpoint);
+                match client.get(&health_url).send().await {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(AIError::NetworkError(format!(
+                        "LM Studio not available (is it running?): {}. Start LM Studio and ensure the API server is enabled.", e
+                    )))
+                }
+            }
         }
     }
 
@@ -97,8 +130,12 @@ impl AIHandler {
         // Check if the service is available
         self.check_service_availability().await?;
 
-        let client = self.client.lock().await;
-        client.models().await
+        // Get current provider from config
+        let config = get_config();
+        let provider = config.ai.active_provider;
+        
+        // Use the factory to get models for the current provider
+        AIClientFactory::get_available_models(provider).await
     }
 
     /// Get cost information for a specific model
@@ -108,28 +145,113 @@ impl AIHandler {
     }
 
     /// Update the AI provider configuration
-    pub async fn update_config(&self, provider: &str, model: &str) -> HandlerResult<String> {
+    pub async fn update_config(&self, provider_str: &str, model: &str) -> HandlerResult<String> {
         use crate::config::{update_field, AppConfig};
+        use std::str::FromStr;
 
-        // Validate provider
-        match provider {
-            "ollama" => {
-                // Check if the model exists for this provider
-                if let Ok(models) = self.list_models().await {
-                    if !models.contains(&model.to_string()) {
-                        return Ok(format!("⚠️ Model '{}' not found. Available models: {}",
-                            model, models.join(", ")));
-                    }
-                }
-            },
-            _ => return Ok(format!("⚠️ Unsupported provider: {}. Currently only 'ollama' is supported.", provider)),
+        // Parse the provider
+        let provider = match Provider::from_str(provider_str) {
+            Ok(p) => p,
+            Err(_) => return Ok(format!("⚠️ Unsupported provider: {}. Valid providers are: ollama, openai, anthropic, lmstudio", provider_str)),
+        };
+
+        // Validate model exists for the provider
+        if let Ok(models) = AIClientFactory::get_available_models(provider).await {
+            if !models.is_empty() && !models.contains(&model.to_string()) {
+                return Ok(format!("⚠️ Model '{}' not found for provider {}. Available models: {}", 
+                    model, provider, models.join(", ")));
+            }
         }
 
         // Update the configuration
         update_field(|config: &mut AppConfig| {
-            config.ai.provider = provider.to_string();
-            config.ai.model = model.to_string();
+            // Set the active provider
+            config.ai.active_provider = provider;
+            
+            // Update the model for this provider
+            match provider {
+                Provider::Ollama => {
+                    // Check if model exists in the list
+                    let mut found = false;
+                    for (i, m) in config.ai.ollama.models.iter().enumerate() {
+                        if m.name == model {
+                            config.ai.ollama.current_model_index = i;
+                            found = true;
+                            break;
+                        }
+                    }
+                    
+                    // If model not found, add it
+                    if !found {
+                        config.ai.ollama.models.push(crate::config::ModelConfig {
+                            name: model.to_string(),
+                            ..Default::default()
+                        });
+                        config.ai.ollama.current_model_index = config.ai.ollama.models.len() - 1;
+                    }
+                },
+                Provider::OpenAI => {
+                    // Similar logic for OpenAI
+                    let mut found = false;
+                    for (i, m) in config.ai.openai.models.iter().enumerate() {
+                        if m.name == model {
+                            config.ai.openai.current_model_index = i;
+                            found = true;
+                            break;
+                        }
+                    }
+                    
+                    if !found {
+                        config.ai.openai.models.push(crate::config::ModelConfig {
+                            name: model.to_string(),
+                            ..Default::default()
+                        });
+                        config.ai.openai.current_model_index = config.ai.openai.models.len() - 1;
+                    }
+                },
+                Provider::Anthropic => {
+                    // Similar logic for Anthropic
+                    let mut found = false;
+                    for (i, m) in config.ai.anthropic.models.iter().enumerate() {
+                        if m.name == model {
+                            config.ai.anthropic.current_model_index = i;
+                            found = true;
+                            break;
+                        }
+                    }
+                    
+                    if !found {
+                        config.ai.anthropic.models.push(crate::config::ModelConfig {
+                            name: model.to_string(),
+                            ..Default::default()
+                        });
+                        config.ai.anthropic.current_model_index = config.ai.anthropic.models.len() - 1;
+                    }
+                },
+                Provider::LMStudio => {
+                    // Similar logic for LM Studio
+                    let mut found = false;
+                    for (i, m) in config.ai.lmstudio.models.iter().enumerate() {
+                        if m.name == model {
+                            config.ai.lmstudio.current_model_index = i;
+                            found = true;
+                            break;
+                        }
+                    }
+                    
+                    if !found {
+                        config.ai.lmstudio.models.push(crate::config::ModelConfig {
+                            name: model.to_string(),
+                            ..Default::default()
+                        });
+                        config.ai.lmstudio.current_model_index = config.ai.lmstudio.models.len() - 1;
+                    }
+                },
+            }
         }).map_err(|e| AIError::ConfigError(format!("Failed to update config: {}", e)))?;
+        
+        // Update the client
+        self.update_client()?;
 
         // Return success message
         Ok(format!("✅ AI provider updated to {} with model {}", provider, model))

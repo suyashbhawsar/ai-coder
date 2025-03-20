@@ -40,17 +40,11 @@ impl Default for ThemeConfig {
     }
 }
 
-/// AI provider configuration
+/// Model configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AIProviderConfig {
-    /// Provider name (e.g., "ollama", "openai")
-    pub provider: String,
-    /// Default model to use
-    pub model: String,
-    /// API endpoint URL
-    pub endpoint: String,
-    /// API key if required (may be empty for local models)
-    pub api_key: String,
+pub struct ModelConfig {
+    /// Model name
+    pub name: String,
     /// Temperature for generation (0.0-1.0)
     pub temperature: f32,
     /// Maximum tokens to generate
@@ -59,16 +53,215 @@ pub struct AIProviderConfig {
     pub system_prompt: Option<String>,
 }
 
-impl Default for AIProviderConfig {
+impl Default for ModelConfig {
     fn default() -> Self {
         Self {
-            provider: "ollama".to_string(),
-            model: "qwen2.5-coder".to_string(),
-            endpoint: "http://localhost:11434".to_string(),
-            api_key: "".to_string(),
+            name: "qwen2.5-coder".to_string(),
             temperature: 0.1,
             max_tokens: 2048,
             system_prompt: None,
+        }
+    }
+}
+
+/// Ollama provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaConfig {
+    /// API endpoint URL
+    pub endpoint: String,
+    /// Available models
+    pub models: Vec<ModelConfig>,
+    /// Currently selected model (index into models)
+    pub current_model_index: usize,
+}
+
+impl Default for OllamaConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "http://localhost:11434".to_string(),
+            models: vec![
+                ModelConfig::default(),
+                ModelConfig {
+                    name: "codellama".to_string(),
+                    temperature: 0.2,
+                    max_tokens: 4096,
+                    system_prompt: None,
+                },
+            ],
+            current_model_index: 0,
+        }
+    }
+}
+
+/// OpenAI provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAIConfig {
+    /// API endpoint URL
+    pub endpoint: String,
+    /// API key
+    pub api_key: String,
+    /// Available models
+    pub models: Vec<ModelConfig>,
+    /// Currently selected model (index into models)
+    pub current_model_index: usize,
+}
+
+impl Default for OpenAIConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "https://api.openai.com/v1".to_string(),
+            api_key: "".to_string(),
+            models: vec![
+                ModelConfig {
+                    name: "gpt-4o".to_string(),
+                    temperature: 0.1,
+                    max_tokens: 4096,
+                    system_prompt: None,
+                },
+                ModelConfig {
+                    name: "gpt-3.5-turbo".to_string(),
+                    temperature: 0.2,
+                    max_tokens: 2048,
+                    system_prompt: None,
+                },
+            ],
+            current_model_index: 0,
+        }
+    }
+}
+
+/// Anthropic provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnthropicConfig {
+    /// API endpoint URL
+    pub endpoint: String,
+    /// API key
+    pub api_key: String,
+    /// Available models
+    pub models: Vec<ModelConfig>,
+    /// Currently selected model (index into models)
+    pub current_model_index: usize,
+}
+
+impl Default for AnthropicConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "https://api.anthropic.com".to_string(),
+            api_key: "".to_string(),
+            models: vec![
+                ModelConfig {
+                    name: "claude-3-opus-20240229".to_string(),
+                    temperature: 0.1,
+                    max_tokens: 4096,
+                    system_prompt: None,
+                },
+                ModelConfig {
+                    name: "claude-3-sonnet-20240229".to_string(),
+                    temperature: 0.2,
+                    max_tokens: 4096,
+                    system_prompt: None,
+                },
+            ],
+            current_model_index: 0,
+        }
+    }
+}
+
+/// LM Studio provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LMStudioConfig {
+    /// API endpoint URL
+    pub endpoint: String,
+    /// Available models
+    pub models: Vec<ModelConfig>,
+    /// Currently selected model (index into models)
+    pub current_model_index: usize,
+}
+
+impl Default for LMStudioConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "http://localhost:1234/v1".to_string(),
+            models: vec![
+                ModelConfig {
+                    name: "local-model".to_string(),
+                    temperature: 0.2,
+                    max_tokens: 2048,
+                    system_prompt: None,
+                },
+            ],
+            current_model_index: 0,
+        }
+    }
+}
+
+/// AI configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AIConfig {
+    /// Currently active provider
+    pub active_provider: crate::ai::types::Provider,
+    /// Ollama configuration
+    pub ollama: OllamaConfig,
+    /// OpenAI configuration
+    pub openai: OpenAIConfig,
+    /// Anthropic configuration
+    pub anthropic: AnthropicConfig,
+    /// LM Studio configuration
+    pub lmstudio: LMStudioConfig,
+}
+
+impl Default for AIConfig {
+    fn default() -> Self {
+        Self {
+            active_provider: crate::ai::types::Provider::Ollama,
+            ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
+            anthropic: AnthropicConfig::default(),
+            lmstudio: LMStudioConfig::default(),
+        }
+    }
+}
+
+impl AIConfig {
+    /// Get the currently active model configuration
+    pub fn get_active_model_config(&self) -> ModelConfig {
+        match self.active_provider {
+            crate::ai::types::Provider::Ollama => {
+                let idx = self.ollama.current_model_index.min(self.ollama.models.len().saturating_sub(1));
+                self.ollama.models[idx].clone()
+            },
+            crate::ai::types::Provider::OpenAI => {
+                let idx = self.openai.current_model_index.min(self.openai.models.len().saturating_sub(1));
+                self.openai.models[idx].clone()
+            },
+            crate::ai::types::Provider::Anthropic => {
+                let idx = self.anthropic.current_model_index.min(self.anthropic.models.len().saturating_sub(1));
+                self.anthropic.models[idx].clone()
+            },
+            crate::ai::types::Provider::LMStudio => {
+                let idx = self.lmstudio.current_model_index.min(self.lmstudio.models.len().saturating_sub(1));
+                self.lmstudio.models[idx].clone()
+            },
+        }
+    }
+    
+    /// Get the endpoint for the currently active provider
+    pub fn get_active_endpoint(&self) -> String {
+        match self.active_provider {
+            crate::ai::types::Provider::Ollama => self.ollama.endpoint.clone(),
+            crate::ai::types::Provider::OpenAI => self.openai.endpoint.clone(),
+            crate::ai::types::Provider::Anthropic => self.anthropic.endpoint.clone(),
+            crate::ai::types::Provider::LMStudio => self.lmstudio.endpoint.clone(),
+        }
+    }
+    
+    /// Get the API key for the currently active provider (if applicable)
+    pub fn get_active_api_key(&self) -> Option<String> {
+        match self.active_provider {
+            crate::ai::types::Provider::Ollama => None,
+            crate::ai::types::Provider::OpenAI => Some(self.openai.api_key.clone()),
+            crate::ai::types::Provider::Anthropic => Some(self.anthropic.api_key.clone()),
+            crate::ai::types::Provider::LMStudio => None,
         }
     }
 }
@@ -79,7 +272,7 @@ pub struct AppConfig {
     /// Theme settings
     pub theme: ThemeConfig,
     /// AI provider settings
-    pub ai: AIProviderConfig,
+    pub ai: AIConfig,
     /// History size
     pub history_size: usize,
     /// Enable mouse support
@@ -94,7 +287,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             theme: ThemeConfig::default(),
-            ai: AIProviderConfig::default(),
+            ai: AIConfig::default(),
             history_size: 100,
             mouse_enabled: true,
             logging_enabled: false,

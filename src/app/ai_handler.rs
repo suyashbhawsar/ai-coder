@@ -1,4 +1,5 @@
-use crate::ai::{AIClient, AIError, AIResponse, OllamaClient, ModelCosts};
+use crate::ai::{AIClient, AIError, AIResponse, ModelCosts, AIClientFactory};
+use crate::config;
 use crate::handlers::HandlerResult;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -16,9 +17,43 @@ impl Default for AIHandler {
 
 impl AIHandler {
     pub fn new() -> Self {
-        let client: Box<dyn AIClient> = Box::new(OllamaClient::new("qwen2.5-coder".to_string()));
+        // Create client based on configuration
+        let client = match AIClientFactory::create_client() {
+            Ok(client) => client,
+            Err(e) => {
+                // Log the error and fall back to a default client
+                eprintln!("Failed to create AI client from config: {}", e);
+                Box::new(crate::ai::OllamaClient::new("qwen2.5-coder".to_string()))
+            }
+        };
+        
         Self {
             client: Arc::new(Mutex::new(client)),
+        }
+    }
+    
+    /// Update the client based on new configuration
+    pub fn update_client(&self) -> Result<(), AIError> {
+        match AIClientFactory::create_client() {
+            Ok(new_client) => {
+                match self.client.try_lock() {
+                    Ok(mut client) => {
+                        *client = new_client;
+                        Ok(())
+                    },
+                    Err(_) => {
+                        // If we can't get a lock immediately, don't block
+                        eprintln!("Warning: Client is currently in use, will update on next use");
+                        Ok(())
+                    }
+                }
+            },
+            Err(e) => {
+                eprintln!("Warning: Failed to create new client: {}", e);
+                // Return success anyway but log the error
+                // This prevents the application from crashing
+                Ok(())
+            }
         }
     }
 
@@ -44,6 +79,12 @@ impl AIHandler {
     async fn check_service_availability(&self) -> Result<(), AIError> {
         use reqwest::Client;
         use std::time::Duration;
+        use crate::config;
+        use crate::ai::Provider;
+
+        // Get current provider from config
+        let app_config = config::get_config();
+        let provider = app_config.ai.active_provider;
 
         // Create a client with a short timeout for just checking availability
         let client = Client::builder()
@@ -51,21 +92,56 @@ impl AIHandler {
             .build()
             .map_err(|e| AIError::NetworkError(format!("Failed to create HTTP client: {}", e)))?;
 
-        // Try to connect to Ollama health endpoint
-        match client.get("http://localhost:11434/api/tags").send().await {
-            Ok(_) => Ok(()),
-            Err(e) => Err(AIError::NetworkError(format!(
-                "Ollama not available (is it running?): {}. Start Ollama with 'ollama serve' command.", e
-            )))
+        match provider {
+            Provider::Ollama => {
+                // Try to connect to Ollama health endpoint
+                let endpoint = app_config.ai.ollama.endpoint.clone();
+                let health_url = format!("{}/api/tags", endpoint);
+                match client.get(&health_url).send().await {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(AIError::NetworkError(format!(
+                        "Ollama not available (is it running?): {}. Start Ollama with 'ollama serve' command.", e
+                    )))
+                }
+            },
+            Provider::OpenAI => {
+                // For OpenAI we just check if the API key is set
+                if app_config.ai.openai.api_key.is_empty() {
+                    return Err(AIError::Authentication("OpenAI API key is not set. Please update your configuration.".to_string()));
+                }
+                Ok(())
+            },
+            Provider::Anthropic => {
+                // For Anthropic we just check if the API key is set
+                if app_config.ai.anthropic.api_key.is_empty() {
+                    return Err(AIError::Authentication("Anthropic API key is not set. Please update your configuration.".to_string()));
+                }
+                Ok(())
+            },
+            Provider::LMStudio => {
+                // Check if LM Studio is running
+                let endpoint = app_config.ai.lmstudio.endpoint.clone();
+                let health_url = format!("{}/models", endpoint);
+                match client.get(&health_url).send().await {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(AIError::NetworkError(format!(
+                        "LM Studio not available (is it running?): {}. Start LM Studio and ensure the API server is enabled.", e
+                    )))
+                }
+            }
         }
     }
 
     pub async fn list_models(&self) -> Result<Vec<String>, AIError> {
-        // Check if Ollama is running first
+        // Check if the service is available
         self.check_service_availability().await?;
 
-        let client = self.client.lock().await;
-        client.models().await
+        // Get current provider from config
+        let app_config = config::get_config();
+        let provider = app_config.ai.active_provider;
+        
+        // Use the factory to get models for the current provider
+        crate::ai::AIClientFactory::get_available_models(provider).await
     }
 
     pub async fn get_model_costs(&self, model: &str) -> ModelCosts {

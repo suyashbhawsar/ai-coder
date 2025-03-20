@@ -8,12 +8,15 @@ A terminal user interface (TUI) for interacting with large language models direc
 
 - Interactive AI chat directly in the terminal
 - Execute shell commands with the `!` prefix
-- Multiple AI provider support (currently Ollama)
+- Multiple AI provider support (Ollama, OpenAI, Anthropic, LMStudio)
+- Dynamic model discovery and switching
+- Support for all Ollama models (llama3, codellama, mistral, qwen, gemma, etc.)
 - Token tracking and cost estimation
 - Command history navigation
 - Text selection and clipboard integration
 - Customizable UI themes
-- Configuration management
+- Modular configuration system
+- Resilient error handling
 - Logging support
 
 ## Installation
@@ -22,6 +25,8 @@ A terminal user interface (TUI) for interacting with large language models direc
 
 - Rust 1.70 or higher
 - For Ollama integration: [Ollama](https://ollama.com) installed and running
+- For OpenAI/Anthropic: Valid API keys for the respective services
+- For LMStudio: [LMStudio](https://lmstudio.ai/) installed and running with API server enabled
 
 ### Building from source
 
@@ -55,9 +60,18 @@ cargo run --release
 
 ### Available Commands
 
-- `/help [topic]`: Show help (optional topics: ai, bash, config, theme, system)
+- `/help [topic]`: Show help (optional topics: ai, bash, config, theme, system, list)
 - `/clear`: Clear terminal output
 - `/config`: View or set configuration
+- `/config provider <name>`: Set AI provider (ollama, openai, anthropic, lmstudio)
+- `/config model <name>`: Set AI model for current provider
+- `/config endpoint <url>`: Set API endpoint URL
+- `/config api_key <key>`: Set API key (for OpenAI/Anthropic)
+- `/config temperature <value>`: Set temperature (0.0-1.0)
+- `/config system_prompt <text>`: Set system prompt
+- `/list providers`: Show available AI providers
+- `/list models`: Show available models for current provider
+- `/list config`: Show all current configuration
 - `/theme`: Customize UI colors
 - `/system`: Display system information
 - `/version`: Show version information
@@ -77,13 +91,45 @@ theme:
   background: "default"
   foreground: "default"
 ai:
-  provider: "ollama"
-  model: "qwen2.5-coder"
-  endpoint: "http://localhost:11434"
-  api_key: ""
-  temperature: 0.7
-  max_tokens: 2048
-  system_prompt: null
+  active_provider: "ollama"
+  ollama:
+    endpoint: "http://localhost:11434"
+    current_model_index: 0
+    models:
+      - name: "llama3"
+        temperature: 0.1
+        max_tokens: 4000
+        system_prompt: "You are a helpful AI coding assistant."
+      - name: "codellama"
+        temperature: 0.1
+        max_tokens: 8000
+        system_prompt: "You are a helpful AI coding assistant specializing in programming."
+  openai:
+    endpoint: "https://api.openai.com/v1"
+    api_key: ""
+    current_model_index: 0
+    models:
+      - name: "gpt-4o"
+        temperature: 0.1
+        max_tokens: 4000
+        system_prompt: "You are a helpful AI coding assistant."
+  anthropic:
+    endpoint: "https://api.anthropic.com"
+    api_key: ""
+    current_model_index: 0
+    models:
+      - name: "claude-3-opus-20240229"
+        temperature: 0.1
+        max_tokens: 4000
+        system_prompt: "You are a helpful AI coding assistant."
+  lmstudio:
+    endpoint: "http://localhost:1234/v1"
+    current_model_index: 0
+    models:
+      - name: "local-model"
+        temperature: 0.1
+        max_tokens: 4000
+        system_prompt: "You are a helpful AI coding assistant."
 history_size: 100
 mouse_enabled: true
 logging_enabled: false
@@ -94,14 +140,20 @@ log_file: "ai-coder.log"
 
 ### Project Structure
 
-- `src/ai`: AI client implementations
+- `src/ai`: AI client implementations and provider abstraction
+  - `src/ai/types.rs`: Common interfaces and provider enum
+  - `src/ai/factory.rs`: Factory pattern for client creation
+  - `src/ai/ollama.rs`: Ollama-specific client implementation
 - `src/app`: Core application state and logic
-- `src/config`: Configuration management
-- `src/event`: Event handling
+  - `src/app/ai_handler.rs`: AI service integration
+- `src/config`: Configuration management with provider-specific settings
+- `src/event`: Event handling and input processing
 - `src/handlers`: Command execution and handling
-- `src/tui`: Terminal interface
-- `src/ui`: UI rendering
-- `src/utils`: Utility functions
+  - `src/handlers/command.rs`: Built-in command implementation
+  - `src/handlers/bash.rs`: Shell command execution
+- `src/tui`: Terminal interface and rendering
+- `src/ui`: UI components and layout
+- `src/utils`: Utility functions and helpers
 
 ### Running Tests
 

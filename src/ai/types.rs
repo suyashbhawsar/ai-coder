@@ -6,6 +6,50 @@ use async_trait::async_trait;
 use thiserror::Error;
 use serde::{Serialize, Deserialize};
 
+/// Supported AI provider types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Provider {
+    /// Ollama local models
+    Ollama,
+    /// OpenAI API models
+    OpenAI,
+    /// Anthropic API models
+    Anthropic,
+    /// Local models via LM Studio
+    LMStudio,
+}
+
+impl std::fmt::Display for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Provider::Ollama => write!(f, "Ollama"),
+            Provider::OpenAI => write!(f, "OpenAI"),
+            Provider::Anthropic => write!(f, "Anthropic"),
+            Provider::LMStudio => write!(f, "LMStudio"),
+        }
+    }
+}
+
+impl std::str::FromStr for Provider {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "ollama" => Ok(Provider::Ollama),
+            "openai" => Ok(Provider::OpenAI),
+            "anthropic" => Ok(Provider::Anthropic),
+            "lmstudio" => Ok(Provider::LMStudio),
+            _ => Err(format!("Unknown provider: {}", s)),
+        }
+    }
+}
+
+impl Default for Provider {
+    fn default() -> Self {
+        Self::Ollama
+    }
+}
+
 /// Errors that can occur when working with AI providers
 #[derive(Debug, Error)]
 pub enum AIError {
