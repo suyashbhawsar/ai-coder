@@ -1,4 +1,4 @@
-use crate::ai::types::{AIClient, AIError, AIResponse, TokenUsage, ModelCosts};
+use crate::ai::types::{AIClient, AIError, AIResponse, ModelCosts, TokenUsage};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,7 @@ impl OllamaClient {
     pub fn new(model: String) -> Self {
         Self {
             client: Client::builder()
-                .timeout(Duration::from_secs(30))
+                .timeout(Duration::from_secs(120))
                 .build()
                 .unwrap(),
             model,
@@ -53,7 +53,7 @@ impl OllamaClient {
     pub fn with_base_url(base_url: String, model: String) -> Self {
         Self {
             client: Client::builder()
-                .timeout(Duration::from_secs(30))
+                .timeout(Duration::from_secs(120))
                 .build()
                 .unwrap(),
             model,
@@ -101,9 +101,11 @@ impl AIClient for OllamaClient {
 
         // Calculate token counts
         // If Ollama provides token counts, use those, otherwise fall back to our approximation
-        let prompt_tokens = generate_response.prompt_eval_count
+        let prompt_tokens = generate_response
+            .prompt_eval_count
             .unwrap_or_else(|| self.count_tokens(prompt));
-        let completion_tokens = generate_response.eval_token_count
+        let completion_tokens = generate_response
+            .eval_token_count
             .or(generate_response.eval_count)
             .unwrap_or_else(|| self.count_tokens(&generate_response.response));
 
@@ -159,7 +161,7 @@ impl AIClient for OllamaClient {
         // You can adjust these based on your needs or computational costs
         match model {
             m if m.contains("llama2") => ModelCosts {
-                prompt_cost_per_1k: 0.0001, // $0.0001 per 1K tokens
+                prompt_cost_per_1k: 0.0001,     // $0.0001 per 1K tokens
                 completion_cost_per_1k: 0.0002, // $0.0002 per 1K tokens
             },
             m if m.contains("codellama") => ModelCosts {

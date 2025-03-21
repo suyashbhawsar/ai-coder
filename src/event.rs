@@ -1,14 +1,15 @@
 use anyhow::Result;
 use crossterm::{
-    event::{self, EnableMouseCapture, Event as CrosstermEvent, KeyCode, MouseEvent, MouseEventKind},
-    terminal::{enable_raw_mode, EnterAlternateScreen},
     ExecutableCommand,
+    event::{
+        self, EnableMouseCapture, Event as CrosstermEvent, KeyCode, MouseEvent, MouseEventKind,
+    },
+    terminal::{EnterAlternateScreen, enable_raw_mode},
 };
+use std::io;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
-use std::io;
-
 
 pub use crossterm::event::KeyEvent;
 
@@ -18,7 +19,7 @@ pub enum Event {
     Key(KeyEvent),
     Mouse(MouseEvent),
     Resize(u16, u16),
-    Copy,    // Event for text copy operation
+    Copy, // Event for text copy operation
     ScrollUp,
     ScrollDown,
 }
@@ -40,8 +41,12 @@ impl EventHandler {
             thread::spawn(move || {
                 let mut stdout = io::stdout();
                 enable_raw_mode().expect("Failed to enable raw mode");
-                stdout.execute(EnterAlternateScreen).expect("Failed to enter alternate screen");
-                stdout.execute(EnableMouseCapture).expect("Failed to enable mouse capture");
+                stdout
+                    .execute(EnterAlternateScreen)
+                    .expect("Failed to enter alternate screen");
+                stdout
+                    .execute(EnableMouseCapture)
+                    .expect("Failed to enable mouse capture");
 
                 let mut last_tick = Instant::now();
                 loop {

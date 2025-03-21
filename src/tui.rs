@@ -1,14 +1,13 @@
 use anyhow::Result;
 use crossterm::{
-    cursor,
+    ExecutableCommand, cursor,
     event::{DisableMouseCapture, EnableMouseCapture},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use ratatui::prelude::*;
 use std::io::{self, stdout};
-use ratatui::backend::CrosstermBackend;
-use ratatui::Terminal;
 
 use crate::event::EventHandler;
 
@@ -45,7 +44,7 @@ impl Tui {
             raw_mode_enabled: true,
         })
     }
-    
+
     // Force an immediate redraw of the UI
     pub fn immediate_refresh<F>(&mut self, f: F) -> io::Result<()>
     where
@@ -119,9 +118,11 @@ impl Drop for Tui {
         }
         self.terminal
             .backend_mut()
-            .execute(DisableMouseCapture).unwrap();
+            .execute(DisableMouseCapture)
+            .unwrap();
         self.terminal
             .backend_mut()
-            .execute(LeaveAlternateScreen).unwrap();
+            .execute(LeaveAlternateScreen)
+            .unwrap();
     }
 }

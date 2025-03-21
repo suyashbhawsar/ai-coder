@@ -1,6 +1,6 @@
+use ratatui::style::Color;
 use std::env;
 use std::path::PathBuf;
-use ratatui::style::Color;
 
 pub struct Colors {
     pub primary: Color,
@@ -13,11 +13,11 @@ pub struct Colors {
 impl Default for Colors {
     fn default() -> Self {
         Self {
-            primary: Color::Rgb(0, 135, 175),    // Blue
-            secondary: Color::Rgb(0, 175, 135),   // Teal
-            accent: Color::Rgb(175, 135, 0),      // Gold
-            background: Color::Reset,             // Terminal default
-            foreground: Color::Reset,             // Terminal default
+            primary: Color::Rgb(0, 135, 175),   // Blue
+            secondary: Color::Rgb(0, 175, 135), // Teal
+            accent: Color::Rgb(175, 135, 0),    // Gold
+            background: Color::Reset,           // Terminal default
+            foreground: Color::Reset,           // Terminal default
         }
     }
 }

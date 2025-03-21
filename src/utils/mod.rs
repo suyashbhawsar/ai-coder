@@ -8,10 +8,10 @@ mod logging;
 pub use format::*;
 pub use logging::*;
 
-use std::path::{Path, PathBuf};
-use std::env;
 use chrono::Local;
 use ratatui::style::Color;
+use std::env;
+use std::path::{Path, PathBuf};
 
 /// Color scheme for the application
 pub struct Colors {
@@ -30,11 +30,11 @@ pub struct Colors {
 impl Default for Colors {
     fn default() -> Self {
         Self {
-            primary: Color::Rgb(0, 135, 175),    // Blue
-            secondary: Color::Rgb(0, 175, 135),  // Teal
-            accent: Color::Rgb(175, 135, 0),     // Gold
-            background: Color::Reset,            // Terminal default
-            foreground: Color::Reset,            // Terminal default
+            primary: Color::Rgb(0, 135, 175),   // Blue
+            secondary: Color::Rgb(0, 175, 135), // Teal
+            accent: Color::Rgb(175, 135, 0),    // Gold
+            background: Color::Reset,           // Terminal default
+            foreground: Color::Reset,           // Terminal default
         }
     }
 }
@@ -86,14 +86,16 @@ pub fn get_shell() -> String {
 /// Check if a command exists in PATH
 pub fn command_exists(command: &str) -> bool {
     use std::process::Command;
-    
+
     // Try to execute the command with --version flag
     // which usually exists for most commands and doesn't do anything harmful
     #[cfg(target_os = "windows")]
     let result = Command::new("where").arg(command).output();
-    
+
     #[cfg(not(target_os = "windows"))]
     let result = Command::new("which").arg(command).output();
-    
-    result.map(|output| output.status.success()).unwrap_or(false)
+
+    result
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }

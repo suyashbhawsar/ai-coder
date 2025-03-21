@@ -1,5 +1,5 @@
 //! Command handlers module
-//! 
+//!
 //! This module contains handlers for different command types, including:
 //! - AI command handling
 //! - Bash command execution

@@ -35,17 +35,17 @@ pub mod utils;
 /// Re-export primary types for convenience
 pub use app::App;
 pub use config::AppConfig;
-pub use tui::Tui;
 pub use event::Event;
+pub use tui::Tui;
 
 /// Initialize the application
 pub fn init() -> anyhow::Result<()> {
     // Initialize configuration
     config::init_config()?;
-    
+
     // Initialize logging
     utils::init_logging()?;
-    
+
     Ok(())
 }
 
@@ -53,6 +53,6 @@ pub fn init() -> anyhow::Result<()> {
 pub fn cleanup() -> anyhow::Result<()> {
     // Close logging
     utils::close_logging()?;
-    
+
     Ok(())
 }

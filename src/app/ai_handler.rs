@@ -1,9 +1,9 @@
-use crate::ai::{AIClient, AIError, AIResponse, ModelCosts, AIClientFactory};
+use crate::ai::{AIClient, AIClientFactory, AIError, AIResponse, ModelCosts};
 use crate::config;
 use crate::handlers::HandlerResult;
+use regex::Regex;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use regex::Regex;
 
 pub struct AIHandler {
     client: Arc<Mutex<Box<dyn AIClient>>>,
@@ -26,12 +26,12 @@ impl AIHandler {
                 Box::new(crate::ai::OllamaClient::new("qwen2.5-coder".to_string()))
             }
         };
-        
+
         Self {
             client: Arc::new(Mutex::new(client)),
         }
     }
-    
+
     /// Update the client based on new configuration
     pub fn update_client(&self) -> Result<(), AIError> {
         match AIClientFactory::create_client() {
@@ -40,14 +40,14 @@ impl AIHandler {
                     Ok(mut client) => {
                         *client = new_client;
                         Ok(())
-                    },
+                    }
                     Err(_) => {
                         // If we can't get a lock immediately, don't block
                         eprintln!("Warning: Client is currently in use, will update on next use");
                         Ok(())
                     }
                 }
-            },
+            }
             Err(e) => {
                 eprintln!("Warning: Failed to create new client: {}", e);
                 // Return success anyway but log the error
@@ -66,8 +66,12 @@ impl AIHandler {
         let response = client.generate(prompt, None).await?;
 
         // Process the response for bash blocks
-        let processed_content = self.process_llm_output(&response.content).await
-            .map_err(|e| AIError::InvalidResponse(format!("Failed to process bash blocks: {}", e)))?;
+        let processed_content = self
+            .process_llm_output(&response.content)
+            .await
+            .map_err(|e| {
+                AIError::InvalidResponse(format!("Failed to process bash blocks: {}", e))
+            })?;
 
         Ok(AIResponse {
             content: processed_content,
@@ -77,10 +81,10 @@ impl AIHandler {
 
     // Helper method to check if the AI service is available
     async fn check_service_availability(&self) -> Result<(), AIError> {
+        use crate::ai::Provider;
+        use crate::config;
         use reqwest::Client;
         use std::time::Duration;
-        use crate::config;
-        use crate::ai::Provider;
 
         // Get current provider from config
         let app_config = config::get_config();
@@ -100,24 +104,30 @@ impl AIHandler {
                 match client.get(&health_url).send().await {
                     Ok(_) => Ok(()),
                     Err(e) => Err(AIError::NetworkError(format!(
-                        "Ollama not available (is it running?): {}. Start Ollama with 'ollama serve' command.", e
-                    )))
+                        "Ollama not available (is it running?): {}. Start Ollama with 'ollama serve' command.",
+                        e
+                    ))),
                 }
-            },
+            }
             Provider::OpenAI => {
                 // For OpenAI we just check if the API key is set
                 if app_config.ai.openai.api_key.is_empty() {
-                    return Err(AIError::Authentication("OpenAI API key is not set. Please update your configuration.".to_string()));
+                    return Err(AIError::Authentication(
+                        "OpenAI API key is not set. Please update your configuration.".to_string(),
+                    ));
                 }
                 Ok(())
-            },
+            }
             Provider::Anthropic => {
                 // For Anthropic we just check if the API key is set
                 if app_config.ai.anthropic.api_key.is_empty() {
-                    return Err(AIError::Authentication("Anthropic API key is not set. Please update your configuration.".to_string()));
+                    return Err(AIError::Authentication(
+                        "Anthropic API key is not set. Please update your configuration."
+                            .to_string(),
+                    ));
                 }
                 Ok(())
-            },
+            }
             Provider::LMStudio => {
                 // Check if LM Studio is running
                 let endpoint = app_config.ai.lmstudio.endpoint.clone();
@@ -125,8 +135,9 @@ impl AIHandler {
                 match client.get(&health_url).send().await {
                     Ok(_) => Ok(()),
                     Err(e) => Err(AIError::NetworkError(format!(
-                        "LM Studio not available (is it running?): {}. Start LM Studio and ensure the API server is enabled.", e
-                    )))
+                        "LM Studio not available (is it running?): {}. Start LM Studio and ensure the API server is enabled.",
+                        e
+                    ))),
                 }
             }
         }
@@ -139,7 +150,7 @@ impl AIHandler {
         // Get current provider from config
         let app_config = config::get_config();
         let provider = app_config.ai.active_provider;
-        
+
         // Use the factory to get models for the current provider
         crate::ai::AIClientFactory::get_available_models(provider).await
     }
@@ -175,7 +186,7 @@ impl AIHandler {
             match crate::handlers::bash::handle_bash_command(command.as_str().trim()) {
                 Ok(cmd_output) => {
                     result.push_str(&cmd_output);
-                },
+                }
                 Err(e) => {
                     result.push_str(&format!("[⏱️ 0.00s | ✗ | 📊 1]\n⚠️ Error: {}\n", e));
                 }

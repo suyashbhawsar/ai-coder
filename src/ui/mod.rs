@@ -7,18 +7,18 @@
 //! - Context menus
 //! - Help overlay
 
-use std::path::Path;
 use chrono::Local;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
-    Frame,
 };
+use std::path::Path;
 
 use crate::app::App;
-use crate::config::{get_config, ThemeConfig};
+use crate::config::{ThemeConfig, get_config};
 
 mod components;
 mod theme;
@@ -53,7 +53,7 @@ pub fn get_theme_colors(theme: &ThemeConfig) -> (Color, Color, Color, Color, Col
     let accent = parse_hex_color(&theme.accent);
     let background = parse_hex_color(&theme.background);
     let foreground = parse_hex_color(&theme.foreground);
-    
+
     (primary, secondary, accent, background, foreground)
 }
 
@@ -61,7 +61,7 @@ pub fn get_theme_colors(theme: &ThemeConfig) -> (Color, Color, Color, Color, Col
 pub fn render(f: &mut Frame, app: &mut App) {
     // Get terminal size
     let size = f.size();
-    
+
     // Get theme from config
     let config = get_config();
     let (primary, _secondary, accent, background, foreground) = get_theme_colors(&config.theme);
@@ -69,11 +69,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // Calculate input area height accounting for both explicit newlines and wrapping
     // First count explicit newlines
     let explicit_lines = app.input.lines().count();
-    
+
     // Calculate approximate wrapped lines based on terminal width
     // Subtract 4 from width to account for borders and prompt prefix
     let content_width = size.width.saturating_sub(4) as usize;
-    
+
     // Calculate wrapped lines more accurately by considering line breaks
     let mut wrapped_lines = 0;
     if content_width > 0 {
@@ -86,26 +86,26 @@ pub fn render(f: &mut Frame, app: &mut App) {
     } else {
         wrapped_lines = 1;
     };
-    
+
     // If input is empty, ensure at least one line
     if app.input.is_empty() {
         wrapped_lines = 1;
     }
-    
+
     // Use the larger of explicit newlines or wrapped lines calculation
     let estimated_lines = explicit_lines.max(wrapped_lines);
-    
+
     // Ensure input box is at least 3 lines tall and doesn't exceed 10 lines
     // (adjust the max as needed based on your preferences)
     let input_height = (estimated_lines as u16).max(1).min(10) + 2; // Add 2 for border
-    
+
     // Create the layout
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),                  // Output area (takes all remaining space)
-            Constraint::Length(input_height),    // Input area (flexible height)
-            Constraint::Length(1),               // Status bar (fixed height)
+            Constraint::Min(1),               // Output area (takes all remaining space)
+            Constraint::Length(input_height), // Input area (flexible height)
+            Constraint::Length(1),            // Status bar (fixed height)
         ])
         .split(size);
 
@@ -127,8 +127,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
 fn render_context_menu(f: &mut Frame, app: &App, accent: Color, bg_color: Color, fg_color: Color) {
     let menu_width = 20;
     let menu_height = 3;
-    let menu_x = app.context_menu_x.min(f.size().width.saturating_sub(menu_width));
-    let menu_y = app.context_menu_y.min(f.size().height.saturating_sub(menu_height));
+    let menu_x = app
+        .context_menu_x
+        .min(f.size().width.saturating_sub(menu_width));
+    let menu_y = app
+        .context_menu_y
+        .min(f.size().height.saturating_sub(menu_height));
 
     let menu_area = Rect::new(menu_x, menu_y, menu_width, menu_height);
 
@@ -154,8 +158,7 @@ fn render_context_menu(f: &mut Frame, app: &App, accent: Color, bg_color: Color,
 /// Render the output area
 fn render_output_area(f: &mut Frame, app: &App, area: Rect, bg_color: Color, fg_color: Color) {
     // No border for output area as requested
-    let output_block = Block::default()
-        .style(Style::default().bg(bg_color).fg(fg_color));
+    let output_block = Block::default().style(Style::default().bg(bg_color).fg(fg_color));
 
     // Create styled text with selection highlighting if applicable
     let mut styled_lines = Vec::new();
@@ -170,7 +173,7 @@ fn render_output_area(f: &mut Frame, app: &App, area: Rect, bg_color: Color, fg_
                 // Highlighted selection
                 styled_lines.push(Line::from(Span::styled(
                     line.clone(),
-                    Style::default().bg(Color::White).fg(Color::Black)
+                    Style::default().bg(Color::White).fg(Color::Black),
                 )));
             } else {
                 // Normal text
@@ -203,44 +206,46 @@ fn render_input_area(f: &mut Frame, app: &App, area: Rect, bg_color: Color, fg_c
 
     // Calculate the inner area to help with text wrapping and scroll management
     let _inner_area = input_block.inner(area);
-    
+
     // Determine cursor style - vertical bar when visible
     let cursor_style = if app.cursor_visible {
-        Style::default().fg(fg_color).add_modifier(ratatui::style::Modifier::REVERSED)
+        Style::default()
+            .fg(fg_color)
+            .add_modifier(ratatui::style::Modifier::REVERSED)
     } else {
         Style::default().fg(fg_color) // Same as normal text when invisible
     };
-    
+
     // Create the text object with proper cursor support
     let mut text = Text::default();
-    
+
     // For multiline input, split by newlines first
     let input_parts: Vec<&str> = app.input.split('\n').collect();
     let mut current_pos = 0;
-    
+
     for (i, part) in input_parts.iter().enumerate() {
         let part_len = part.len() + if i < input_parts.len() - 1 { 1 } else { 0 }; // +1 for the newline
-        
+
         // Check if cursor is in this line segment
         if current_pos <= app.cursor_position && app.cursor_position < current_pos + part_len {
             // Cursor is in this segment
             let line_cursor_pos = app.cursor_position - current_pos;
-            
+
             // Create spans for this line
             let mut spans = Vec::new();
-            
+
             // Add the prompt only to the first line
             if i == 0 {
                 spans.push(Span::raw("> "));
             } else {
                 spans.push(Span::raw("  ")); // Indent continuation lines
             }
-            
+
             // Add text before cursor
             if line_cursor_pos > 0 {
                 spans.push(Span::raw(&part[..line_cursor_pos]));
             }
-            
+
             // Add cursor or character at cursor
             if line_cursor_pos < part.len() {
                 let cursor_char = part[line_cursor_pos..].chars().next().unwrap_or(' ');
@@ -249,7 +254,7 @@ fn render_input_area(f: &mut Frame, app: &App, area: Rect, bg_color: Color, fg_c
                 } else {
                     spans.push(Span::raw(cursor_char.to_string()));
                 }
-                
+
                 // Add text after cursor
                 if line_cursor_pos + 1 < part.len() {
                     spans.push(Span::raw(&part[line_cursor_pos + 1..]));
@@ -260,7 +265,7 @@ fn render_input_area(f: &mut Frame, app: &App, area: Rect, bg_color: Color, fg_c
                     spans.push(Span::styled("│", cursor_style));
                 }
             }
-            
+
             text.lines.push(Line::from(spans));
         } else {
             // Cursor not in this segment, render normally
@@ -273,12 +278,14 @@ fn render_input_area(f: &mut Frame, app: &App, area: Rect, bg_color: Color, fg_c
             spans.push(Span::raw(*part));
             text.lines.push(Line::from(spans));
         }
-        
+
         current_pos += part_len;
     }
-    
+
     // If cursor is at the very end and there's no newline at the end
-    if app.cursor_position == app.input.len() && (app.input.is_empty() || !app.input.ends_with('\n')) {
+    if app.cursor_position == app.input.len()
+        && (app.input.is_empty() || !app.input.ends_with('\n'))
+    {
         // If the text is empty or we haven't added any lines yet
         if text.lines.is_empty() {
             let mut spans = Vec::new();
@@ -291,7 +298,7 @@ fn render_input_area(f: &mut Frame, app: &App, area: Rect, bg_color: Color, fg_c
             // Get the last line
             let last_idx = text.lines.len() - 1;
             let last_line = &text.lines[last_idx];
-            
+
             // Add cursor at the end of the last line if it's visible
             if app.cursor_visible {
                 let mut new_spans = last_line.spans.clone();
@@ -300,7 +307,7 @@ fn render_input_area(f: &mut Frame, app: &App, area: Rect, bg_color: Color, fg_c
             }
         }
     }
-    
+
     let input_widget = Paragraph::new(text)
         .block(input_block)
         .style(Style::default().fg(fg_color))
@@ -351,13 +358,16 @@ fn render_status_bar(
     // Add text selection indicator if applicable
     if app.is_selecting_text {
         spans.push(Span::raw(" "));
-        spans.push(Span::styled(" SELECTING ", Style::default().bg(Color::Yellow).fg(Color::Black)));
+        spans.push(Span::styled(
+            " SELECTING ",
+            Style::default().bg(Color::Yellow).fg(Color::Black),
+        ));
     }
 
     let status_text = Line::from(spans);
 
-    let status_widget = Paragraph::new(status_text)
-        .style(Style::default().bg(primary_color).fg(bg_color));
+    let status_widget =
+        Paragraph::new(status_text).style(Style::default().bg(primary_color).fg(bg_color));
 
     f.render_widget(status_widget, area);
 }

@@ -2,8 +2,8 @@
 //!
 //! Provides color theme functionality for the terminal UI
 
-use ratatui::style::Color;
 use crate::config::ThemeConfig;
+use ratatui::style::Color;
 
 /// Theme structure for UI colors
 #[derive(Debug, Clone)]
@@ -36,11 +36,11 @@ impl Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            primary: Color::Rgb(0, 135, 175),    // Blue
-            secondary: Color::Rgb(0, 175, 135),  // Teal
-            accent: Color::Rgb(175, 135, 0),     // Gold
-            background: Color::Reset,            // Terminal default
-            foreground: Color::Reset,            // Terminal default
+            primary: Color::Rgb(0, 135, 175),   // Blue
+            secondary: Color::Rgb(0, 175, 135), // Teal
+            accent: Color::Rgb(175, 135, 0),    // Gold
+            background: Color::Reset,           // Terminal default
+            foreground: Color::Reset,           // Terminal default
         }
     }
 }

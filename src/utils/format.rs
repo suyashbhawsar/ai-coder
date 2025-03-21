@@ -48,14 +48,14 @@ pub fn format_number(num: usize) -> String {
     let mut result = String::new();
     let num_str = num.to_string();
     let len = num_str.len();
-    
+
     for (i, c) in num_str.chars().enumerate() {
         result.push(c);
         if (len - i - 1) % 3 == 0 && i < len - 1 {
             result.push(',');
         }
     }
-    
+
     result
 }
 
@@ -76,7 +76,7 @@ pub fn count_tokens(text: &str) -> usize {
         .split(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
         .filter(|s| !s.is_empty())
         .collect();
-    
+
     // Apply a multiplier for better estimation
     (tokens.len() as f64 * 1.3).round() as usize
 }

@@ -1,20 +1,20 @@
 use crate::handlers::{bash, command};
-use clipboard::{ClipboardContext, ClipboardProvider};
-use std::time::{Duration, Instant};
 use anyhow::Result;
 use chrono::{DateTime, Local};
+use clipboard::{ClipboardContext, ClipboardProvider};
+use crossterm::event::{KeyCode, KeyModifiers};
 use std::collections::VecDeque;
 use std::env;
-use std::path::PathBuf;
 use std::io;
-use crossterm::event::{KeyCode, KeyModifiers};
+use std::path::PathBuf;
 use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use crate::event::Event;
-use crate::tui::Tui;
 use crate::handlers::CommandMode;
-use crate::utils::Colors;
+use crate::tui::Tui;
 use crate::ui;
+use crate::utils::Colors;
 
 mod ai_handler;
 use ai_handler::AIHandler;
@@ -82,8 +82,8 @@ impl History {
 pub struct App {
     pub running: bool,
     pub input: String,
-    pub cursor_position: usize, // Track cursor position in input
-    pub cursor_visible: bool, // Toggle for cursor blinking
+    pub cursor_position: usize,      // Track cursor position in input
+    pub cursor_visible: bool,        // Toggle for cursor blinking
     pub last_cursor_toggle: Instant, // Time of last cursor blink
     pub output: String,
     pub history: History,
@@ -102,8 +102,8 @@ pub struct App {
     pub mouse_drag_start_x: u16,
     pub mouse_drag_start_y: u16,
     pub mouse_drag_ongoing: bool,
-    pub output_area_height: u16, // To track output area dimensions
-    pub last_click_time: Instant, // For double click detection
+    pub output_area_height: u16,    // To track output area dimensions
+    pub last_click_time: Instant,   // For double click detection
     pub last_click_pos: (u16, u16), // For double click detection
     pub native_selection_mode: bool,
     pub is_scrolling: bool, // Track when scrolling is in progress
@@ -116,7 +116,7 @@ impl Default for App {
         Self {
             running: true,
             input: String::new(),
-            cursor_position: 0, // Initialize cursor at beginning of input
+            cursor_position: 0,   // Initialize cursor at beginning of input
             cursor_visible: true, // Start with visible cursor
             last_cursor_toggle: Instant::now(), // Initialize cursor blink timer
             output: String::new(),
@@ -142,7 +142,7 @@ impl Default for App {
             native_selection_mode: true,
             is_scrolling: false, // Initialize scrolling state
             ai_handler: AIHandler::new(),
-            spinner_rx: None // Initialize spinner receiver as None
+            spinner_rx: None, // Initialize spinner receiver as None
         }
     }
 }
@@ -154,7 +154,11 @@ impl App {
 
     pub fn add_output(&mut self, text: String) {
         // Ensure the text ends with a newline
-        let text = if text.ends_with('\n') { text } else { text + "\n" };
+        let text = if text.ends_with('\n') {
+            text
+        } else {
+            text + "\n"
+        };
         self.output.push_str(&text);
 
         // Update output_lines for text selection and copying
@@ -211,8 +215,8 @@ impl App {
                 self.add_output("\n".to_string());
 
                 // Now execute the command
-                let result = bash::handle_bash_command(&cmd)
-                    .unwrap_or_else(|e| format!("Error: {}", e));
+                let result =
+                    bash::handle_bash_command(&cmd).unwrap_or_else(|e| format!("Error: {}", e));
                 self.add_output(result);
                 self.stats.bash_count += 1;
             }
@@ -239,17 +243,20 @@ impl App {
                         // Special handling for commands that might modify the AI client
                         if cmd.starts_with("provider") || cmd.starts_with("model") {
                             self.add_output(result.clone());
-                            
+
                             // Attempt to update the AI client - log errors but don't crash
                             if let Err(e) = self.ai_handler.update_client() {
-                                self.add_output(format!("⚠️ Warning: Could not update AI client: {}\n", e));
+                                self.add_output(format!(
+                                    "⚠️ Warning: Could not update AI client: {}\n",
+                                    e
+                                ));
                             } else {
                                 self.add_output("✅ AI client updated successfully\n".to_string());
                             }
                         } else {
                             self.add_output(result);
                         }
-                    },
+                    }
                     Err(e) => {
                         self.add_output(format!("Error: {}", e));
                     }
@@ -345,19 +352,23 @@ impl App {
         }
 
         // Navigate through history with match statement
-        match self.history.position.cmp(&(self.history.commands.len() - 1)) {
+        match self
+            .history
+            .position
+            .cmp(&(self.history.commands.len() - 1))
+        {
             std::cmp::Ordering::Less => {
                 // Not at the end of history yet
                 self.history.position += 1;
                 if let Some(cmd) = self.history.commands.get(self.history.position) {
                     self.input = cmd.clone();
                 }
-            },
+            }
             std::cmp::Ordering::Equal => {
                 // At the end of history, clear input
                 self.history.position = self.history.commands.len();
                 self.input.clear();
-            },
+            }
             std::cmp::Ordering::Greater => {
                 // Already beyond history
             }
@@ -389,8 +400,9 @@ impl App {
             let now = Instant::now();
             let double_click_threshold = Duration::from_millis(500); // 500ms for double click
 
-            if now.duration_since(self.last_click_time) < double_click_threshold &&
-               self.last_click_pos == (x, y) {
+            if now.duration_since(self.last_click_time) < double_click_threshold
+                && self.last_click_pos == (x, y)
+            {
                 // Double click detected - select word
                 self.select_word_at(line_idx);
             }
@@ -524,7 +536,7 @@ impl App {
                         self.copy_selected_text();
                     }
                 }
-            },
+            }
             "paste" => {
                 // Get text from clipboard
                 if let Ok(mut ctx) = ClipboardContext::new() {
@@ -532,14 +544,14 @@ impl App {
                         self.input.push_str(&text);
                     }
                 }
-            },
+            }
             "select_all" => {
                 if !self.output_lines.is_empty() {
                     self.is_selecting_text = true;
                     self.selection_start = 0;
                     self.selection_end = self.output_lines.len() - 1;
                 }
-            },
+            }
             _ => {}
         }
         self.hide_context_menu();
@@ -558,7 +570,7 @@ impl App {
             let output_ratio = self.stats.completion_tokens as f64 / self.stats.total_tokens as f64;
             (
                 self.stats.cost * input_ratio,
-                self.stats.cost * output_ratio
+                self.stats.cost * output_ratio,
             )
         } else {
             (0.0, 0.0)
@@ -644,7 +656,8 @@ impl App {
                             // Handle menu selection
                             if key_event.code == KeyCode::Enter {
                                 let menu_options = ["copy", "paste", "select_all"];
-                                if let Some(selected) = menu_options.first() { // In the future, track selected item
+                                if let Some(selected) = menu_options.first() {
+                                    // In the future, track selected item
                                     self.handle_context_menu_action(selected);
                                 }
                                 return Ok(());
@@ -673,7 +686,9 @@ impl App {
                                     }
                                 }
                             }
-                            KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Char('c')
+                                if key_event.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
                                 if self.is_selecting_text {
                                     self.copy_selected_text();
                                 } else {
@@ -790,18 +805,29 @@ impl App {
                         // Only process mouse events in the output area (y < output_area_height)
                         if mouse_event.row < self.output_area_height {
                             match mouse_event.kind {
-                                crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Right) => {
+                                crossterm::event::MouseEventKind::Down(
+                                    crossterm::event::MouseButton::Right,
+                                ) => {
                                     self.show_context_menu(mouse_event.column, mouse_event.row);
-                                },
-                                crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                                }
+                                crossterm::event::MouseEventKind::Down(
+                                    crossterm::event::MouseButton::Left,
+                                ) => {
                                     self.start_mouse_selection(mouse_event.column, mouse_event.row);
-                                },
-                                crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
-                                    self.update_mouse_selection(mouse_event.column, mouse_event.row);
-                                },
-                                crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                                }
+                                crossterm::event::MouseEventKind::Drag(
+                                    crossterm::event::MouseButton::Left,
+                                ) => {
+                                    self.update_mouse_selection(
+                                        mouse_event.column,
+                                        mouse_event.row,
+                                    );
+                                }
+                                crossterm::event::MouseEventKind::Up(
+                                    crossterm::event::MouseButton::Left,
+                                ) => {
                                     self.end_mouse_selection();
-                                },
+                                }
                                 _ => {}
                             }
                         }

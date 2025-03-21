@@ -1,7 +1,7 @@
-use tokio::runtime::Runtime;
 use crate::ai::{AIClient, OllamaClient, SessionStats};
-use std::sync::Mutex;
 use once_cell::sync::Lazy;
+use std::sync::Mutex;
+use tokio::runtime::Runtime;
 
 static SESSION_STATS: Lazy<Mutex<SessionStats>> = Lazy::new(|| Mutex::new(SessionStats::default()));
 
@@ -23,10 +23,12 @@ pub fn handle_ai_response(prompt: &str) -> String {
     // Execute the async operation
     match rt.block_on(client.generate(prompt, None)) {
         Ok(response) => {
-            println!("Debug: Response received with tokens - Prompt: {}, Completion: {}, Total: {}",
+            println!(
+                "Debug: Response received with tokens - Prompt: {}, Completion: {}, Total: {}",
                 response.usage.prompt_tokens,
                 response.usage.completion_tokens,
-                response.usage.total_tokens);
+                response.usage.total_tokens
+            );
 
             // Update session stats
             let model_costs = client.get_model_costs(&response.model);
@@ -37,19 +39,21 @@ pub fn handle_ai_response(prompt: &str) -> String {
 
                 stats.update(&response.usage, &model_costs);
 
-                println!("Debug: Session stats updated - Prompt tokens: {} -> {}, Completion tokens: {} -> {}, Cost: ${:.6} -> ${:.6}",
+                println!(
+                    "Debug: Session stats updated - Prompt tokens: {} -> {}, Completion tokens: {} -> {}, Cost: ${:.6} -> ${:.6}",
                     old_prompt_tokens,
                     stats.total_prompt_tokens,
                     old_completion_tokens,
                     stats.total_completion_tokens,
                     old_cost,
-                    stats.total_cost);
+                    stats.total_cost
+                );
             }
 
             // Return the response content
             response.content
         }
-        Err(e) => format!("⚠️ Error: {}", e)
+        Err(e) => format!("⚠️ Error: {}", e),
     }
 }
 
@@ -60,7 +64,8 @@ pub fn handle_ai_config(args: &[&str]) -> String {
             - /config model [model_name]: Set the AI model\n\
             - /config provider [provider_name]: Set AI provider\n\
             - /config temperature [0.0-1.0]: Set response creativity\n\n\
-            Current settings are stored in ~/.llm-chainfuse/config.yaml".to_string();
+            Current settings are stored in ~/.llm-chainfuse/config.yaml"
+            .to_string();
     }
 
     let key = args[0].to_lowercase();
@@ -75,22 +80,24 @@ pub fn handle_ai_config(args: &[&str]) -> String {
         }
         "provider" => {
             if value.is_empty() {
-                return "⚠️ Provider name required. Usage: /config provider PROVIDER_NAME".to_string();
+                return "⚠️ Provider name required. Usage: /config provider PROVIDER_NAME"
+                    .to_string();
             }
             match value {
                 "ollama" => "✅ Provider set to: ollama".to_string(),
-                _ => format!("⚠️ Unknown provider: {}. Currently supported: ollama", value)
+                _ => format!(
+                    "⚠️ Unknown provider: {}. Currently supported: ollama",
+                    value
+                ),
             }
         }
-        "temperature" => {
-            match value.parse::<f64>() {
-                Ok(temp) if (0.0..=1.0).contains(&temp) => {
-                    format!("✅ Temperature set to: {}", temp)
-                }
-                _ => "⚠️ Temperature must be between 0.0 and 1.0".to_string()
+        "temperature" => match value.parse::<f64>() {
+            Ok(temp) if (0.0..=1.0).contains(&temp) => {
+                format!("✅ Temperature set to: {}", temp)
             }
-        }
-        _ => format!("⚠️ Unknown configuration key: {}", key)
+            _ => "⚠️ Temperature must be between 0.0 and 1.0".to_string(),
+        },
+        _ => format!("⚠️ Unknown configuration key: {}", key),
     }
 }
 
@@ -104,7 +111,7 @@ pub fn get_model_list() -> String {
     // Execute the async operation
     match rt.block_on(client.models()) {
         Ok(models) => format!("Available models:\n{}", models.join("\n")),
-        Err(e) => format!("⚠️ Error fetching models: {}", e)
+        Err(e) => format!("⚠️ Error fetching models: {}", e),
     }
 }
 
@@ -113,7 +120,7 @@ pub fn get_session_cost() -> String {
     // In a real app, we would get these from thread-local app state
     // For now, we'll use the static SESSION_STATS for backwards compatibility
     // This will be replaced by App's stats in the actual implementation
-    
+
     if let Ok(stats) = SESSION_STATS.lock() {
         let total_tokens = stats.total_prompt_tokens + stats.total_completion_tokens;
 
@@ -123,7 +130,7 @@ pub fn get_session_cost() -> String {
             let output_ratio = stats.total_completion_tokens as f64 / total_tokens as f64;
             (
                 stats.total_cost * input_ratio,
-                stats.total_cost * output_ratio
+                stats.total_cost * output_ratio,
             )
         } else {
             (0.0, 0.0)
@@ -168,4 +175,3 @@ pub fn clear_history() -> String {
     }
     "✅ Conversation history and statistics cleared".to_string()
 }
-

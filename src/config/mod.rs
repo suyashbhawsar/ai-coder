@@ -6,11 +6,11 @@
 //! - User preferences
 //! - Theme settings
 
-use std::path::PathBuf;
+use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
-use serde::{Deserialize, Serialize};
-use once_cell::sync::Lazy;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 /// Theme configuration for the application UI
@@ -182,14 +182,12 @@ impl Default for LMStudioConfig {
     fn default() -> Self {
         Self {
             endpoint: "http://localhost:1234/v1".to_string(),
-            models: vec![
-                ModelConfig {
-                    name: "local-model".to_string(),
-                    temperature: 0.2,
-                    max_tokens: 2048,
-                    system_prompt: None,
-                },
-            ],
+            models: vec![ModelConfig {
+                name: "local-model".to_string(),
+                temperature: 0.2,
+                max_tokens: 2048,
+                system_prompt: None,
+            }],
             current_model_index: 0,
         }
     }
@@ -227,24 +225,36 @@ impl AIConfig {
     pub fn get_active_model_config(&self) -> ModelConfig {
         match self.active_provider {
             crate::ai::types::Provider::Ollama => {
-                let idx = self.ollama.current_model_index.min(self.ollama.models.len().saturating_sub(1));
+                let idx = self
+                    .ollama
+                    .current_model_index
+                    .min(self.ollama.models.len().saturating_sub(1));
                 self.ollama.models[idx].clone()
-            },
+            }
             crate::ai::types::Provider::OpenAI => {
-                let idx = self.openai.current_model_index.min(self.openai.models.len().saturating_sub(1));
+                let idx = self
+                    .openai
+                    .current_model_index
+                    .min(self.openai.models.len().saturating_sub(1));
                 self.openai.models[idx].clone()
-            },
+            }
             crate::ai::types::Provider::Anthropic => {
-                let idx = self.anthropic.current_model_index.min(self.anthropic.models.len().saturating_sub(1));
+                let idx = self
+                    .anthropic
+                    .current_model_index
+                    .min(self.anthropic.models.len().saturating_sub(1));
                 self.anthropic.models[idx].clone()
-            },
+            }
             crate::ai::types::Provider::LMStudio => {
-                let idx = self.lmstudio.current_model_index.min(self.lmstudio.models.len().saturating_sub(1));
+                let idx = self
+                    .lmstudio
+                    .current_model_index
+                    .min(self.lmstudio.models.len().saturating_sub(1));
                 self.lmstudio.models[idx].clone()
-            },
+            }
         }
     }
-    
+
     /// Get the endpoint for the currently active provider
     pub fn get_active_endpoint(&self) -> String {
         match self.active_provider {
@@ -254,7 +264,7 @@ impl AIConfig {
             crate::ai::types::Provider::LMStudio => self.lmstudio.endpoint.clone(),
         }
     }
-    
+
     /// Get the API key for the currently active provider (if applicable)
     pub fn get_active_api_key(&self) -> Option<String> {
         match self.active_provider {
@@ -338,11 +348,11 @@ pub fn get_config_file() -> PathBuf {
 /// Load configuration from file
 pub fn load_config() -> Result<AppConfig, io::Error> {
     let config_file = get_config_file();
-    
+
     if !config_file.exists() {
         return Ok(AppConfig::default());
     }
-    
+
     let config_str = fs::read_to_string(config_file)?;
     serde_yaml::from_str(&config_str).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
@@ -351,14 +361,14 @@ pub fn load_config() -> Result<AppConfig, io::Error> {
 pub fn save_config(config: &AppConfig) -> Result<(), io::Error> {
     let config_dir = get_config_dir();
     let config_file = get_config_file();
-    
+
     if !config_dir.exists() {
         fs::create_dir_all(&config_dir)?;
     }
-    
-    let config_str = serde_yaml::to_string(config)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    
+
+    let config_str =
+        serde_yaml::to_string(config).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
     fs::write(config_file, config_str)
 }
 
@@ -366,19 +376,19 @@ pub fn save_config(config: &AppConfig) -> Result<(), io::Error> {
 pub fn init_config() -> Result<(), io::Error> {
     let config_dir = get_config_dir();
     let config_file = get_config_file();
-    
+
     if !config_dir.exists() {
         fs::create_dir_all(&config_dir)?;
     }
-    
+
     if !config_file.exists() {
         let default_config = AppConfig::default();
         save_config(&default_config)?;
     }
-    
+
     // Load config into memory
     let loaded_config = load_config()?;
     *CONFIG.lock().unwrap() = loaded_config;
-    
+
     Ok(())
 }

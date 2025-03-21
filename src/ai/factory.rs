@@ -16,7 +16,9 @@ impl AIClientFactory {
     }
 
     /// Create an AI client from explicit configuration
-    pub fn create_client_from_config(ai_config: &config::AIConfig) -> Result<Box<dyn AIClient>, AIError> {
+    pub fn create_client_from_config(
+        ai_config: &config::AIConfig,
+    ) -> Result<Box<dyn AIClient>, AIError> {
         match ai_config.active_provider {
             Provider::Ollama => {
                 let model_config = ai_config.get_active_model_config();
@@ -59,15 +61,27 @@ impl AIClientFactory {
                 client.models().await
             }
             // For other providers, we'll return their configured models
-            Provider::OpenAI => {
-                Ok(config.ai.openai.models.iter().map(|m| m.name.clone()).collect())
-            }
-            Provider::Anthropic => {
-                Ok(config.ai.anthropic.models.iter().map(|m| m.name.clone()).collect())
-            }
-            Provider::LMStudio => {
-                Ok(config.ai.lmstudio.models.iter().map(|m| m.name.clone()).collect())
-            }
+            Provider::OpenAI => Ok(config
+                .ai
+                .openai
+                .models
+                .iter()
+                .map(|m| m.name.clone())
+                .collect()),
+            Provider::Anthropic => Ok(config
+                .ai
+                .anthropic
+                .models
+                .iter()
+                .map(|m| m.name.clone())
+                .collect()),
+            Provider::LMStudio => Ok(config
+                .ai
+                .lmstudio
+                .models
+                .iter()
+                .map(|m| m.name.clone())
+                .collect()),
         }
     }
 }

@@ -16,7 +16,12 @@ const RESTRICTED_COMMANDS: [&str; 9] = [
 
 // List of potentially dangerous patterns
 const DANGEROUS_PATTERNS: [&str; 6] = [
-    "rm -rf", "mkfs", "dd if=/dev/zero", "chmod -R 777", ":(){ ", "fork bomb",
+    "rm -rf",
+    "mkfs",
+    "dd if=/dev/zero",
+    "chmod -R 777",
+    ":(){ ",
+    "fork bomb",
 ];
 
 pub fn handle_bash_command(command: &str) -> String {
@@ -37,7 +42,8 @@ pub fn handle_bash_command(command: &str) -> String {
     for pattern in DANGEROUS_PATTERNS.iter() {
         if command.contains(pattern) {
             return "⚠️ This command contains potentially dangerous operations.\n\
-                For safety reasons, it has been blocked.".to_string();
+                For safety reasons, it has been blocked."
+                .to_string();
         }
     }
 
@@ -45,8 +51,8 @@ pub fn handle_bash_command(command: &str) -> String {
     let start_time = Instant::now();
 
     // Prepare command for execution
-    let cmd_parts: Vec<String> = shell_words::split(command)
-        .unwrap_or_else(|_| vec![command.to_string()]);
+    let cmd_parts: Vec<String> =
+        shell_words::split(command).unwrap_or_else(|_| vec![command.to_string()]);
 
     if cmd_parts.is_empty() {
         return "⚠️ Invalid command format".to_string();
@@ -82,7 +88,13 @@ pub fn handle_bash_command(command: &str) -> String {
     }
 }
 
-fn format_command_output(command: &str, return_code: i32, stdout: &str, stderr: &str, execution_time: f64) -> String {
+fn format_command_output(
+    command: &str,
+    return_code: i32,
+    stdout: &str,
+    stderr: &str,
+    execution_time: f64,
+) -> String {
     // Prepare header
     let mut result = format!("📎 Command: {}\n", command);
     result.push_str(&format!("⏱️ Execution time: {:.2}s\n", execution_time));

@@ -3,10 +3,10 @@
 //! This module handles execution of bash commands and provides
 //! security controls and formatting of outputs.
 
+use crate::handlers::{HandlerError, HandlerResult};
+use regex::Regex;
 use std::process::{Command, Stdio};
 use std::time::Instant;
-use regex::Regex;
-use crate::handlers::{HandlerResult, HandlerError};
 
 /// List of commands that are completely restricted for security
 const RESTRICTED_COMMANDS: [&str; 12] = [
@@ -19,9 +19,9 @@ const RESTRICTED_COMMANDS: [&str; 12] = [
     "dd if=/dev/zero of=/dev/sda",
     ":(){ :|:& };:",
     "chmod -R 777 /",
-    "> /dev/null; rm",  // Command injection attempts
-    "$(rm",             // Command substitution attempts
-    "`rm",              // Backtick command substitution
+    "> /dev/null; rm", // Command injection attempts
+    "$(rm",            // Command substitution attempts
+    "`rm",             // Backtick command substitution
 ];
 
 /// List of potentially dangerous patterns that should be blocked
@@ -32,8 +32,8 @@ const DANGEROUS_PATTERNS: [&str; 8] = [
     "chmod -R 777",
     ":(){ ",
     "fork bomb",
-    "wget",   // External download tools
-    "curl",   // External download tools
+    "wget", // External download tools
+    "curl", // External download tools
 ];
 
 /// Checks if a command is safe to execute
@@ -46,7 +46,9 @@ fn is_command_safe(command: &str) -> bool {
     }
 
     // Compile regex for safe rm -rf pattern only once
-    let safe_rm_pattern = Regex::new(r"rm\s+-rf\s+(?:\.\/)?[a-zA-Z0-9_\-\+\.]+(?:\/[a-zA-Z0-9_\-\+\.]+)*\s*$").unwrap();
+    let safe_rm_pattern =
+        Regex::new(r"rm\s+-rf\s+(?:\.\/)?[a-zA-Z0-9_\-\+\.]+(?:\/[a-zA-Z0-9_\-\+\.]+)*\s*$")
+            .unwrap();
 
     // Check for dangerous patterns
     for pattern in DANGEROUS_PATTERNS.iter() {
@@ -74,7 +76,7 @@ pub fn handle_bash_command(command: &str) -> HandlerResult<String> {
     // Security checks
     if !is_command_safe(command) {
         return Err(HandlerError::Bash(
-            "This command is restricted for security reasons.".to_string()
+            "This command is restricted for security reasons.".to_string(),
         ));
     }
 
@@ -90,16 +92,20 @@ pub fn handle_bash_command(command: &str) -> HandlerResult<String> {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
-            .map_err(|e| {
-                HandlerError::Bash(format!("Failed to execute command: {}", e))
-            })?;
+            .map_err(|e| HandlerError::Bash(format!("Failed to execute command: {}", e)))?;
 
         let elapsed = start_time.elapsed();
         let exit_code = result.status.code().unwrap_or(-1);
         let stdout = String::from_utf8_lossy(&result.stdout).to_string();
         let stderr = String::from_utf8_lossy(&result.stderr).to_string();
 
-        return Ok(format_command_output(command, exit_code, &stdout, &stderr, elapsed.as_secs_f64()));
+        return Ok(format_command_output(
+            command,
+            exit_code,
+            &stdout,
+            &stderr,
+            elapsed.as_secs_f64(),
+        ));
     }
 
     // For other commands, use direct execution
@@ -116,16 +122,20 @@ pub fn handle_bash_command(command: &str) -> HandlerResult<String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .map_err(|e| {
-            HandlerError::Bash(format!("Failed to execute command: {}", e))
-        })?;
+        .map_err(|e| HandlerError::Bash(format!("Failed to execute command: {}", e)))?;
 
     let elapsed = start_time.elapsed();
     let exit_code = result.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&result.stdout).to_string();
     let stderr = String::from_utf8_lossy(&result.stderr).to_string();
 
-    Ok(format_command_output(command, exit_code, &stdout, &stderr, elapsed.as_secs_f64()))
+    Ok(format_command_output(
+        command,
+        exit_code,
+        &stdout,
+        &stderr,
+        elapsed.as_secs_f64(),
+    ))
 }
 
 /// Format command output with proper style and information
@@ -134,10 +144,11 @@ fn format_command_output(
     return_code: i32,
     stdout: &str,
     stderr: &str,
-    execution_time: f64
+    execution_time: f64,
 ) -> String {
     // Compact header with metadata
-    let mut result = format!("[⏱️ {:.2}s | {} | 📊 {}]\n",
+    let mut result = format!(
+        "[⏱️ {:.2}s | {} | 📊 {}]\n",
         execution_time,
         if return_code == 0 { "✓" } else { "✗" },
         return_code
