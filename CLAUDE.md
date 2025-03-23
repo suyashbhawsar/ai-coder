@@ -9,6 +9,18 @@
 - Format: `cargo fmt`
 - Benchmarks: `cargo bench`
 
+## Output Expectations
+- **Minimal Design**: Output should be clean and minimalist without unnecessary text
+- **No Debug Messages**: No debug output like "AI Response received: X chars"
+- **No Task Status**: Task status messages like "[Task ABC] ✅ Completed in 5.2s" should be hidden
+- **Limited Newlines**: Avoid excessive newlines that waste vertical space 
+- **Clean Transitions**: Transitions between commands should be visually clean
+- **Efficient Space**: Maximize content display area, minimize UI chrome
+- **No Spinners in Output**: Spinner animation should be removed when response is displayed
+- **Consistent Spacing**: Single newline between input and output responses
+- **Trimmed Whitespace**: No trailing empty lines or excessive whitespace
+- **Compact Layout**: Compact command separators with minimal whitespace
+
 ## Code Style Guidelines
 - Use Rust 2021 edition idioms
 - Document all public APIs with doc comments (`//!` for modules, `///` for items)
@@ -35,6 +47,10 @@
 - **Testing**: Critical paths should have proper test coverage
 - **Resilience**: Handle network failures and service unavailability gracefully
 - **Cross-platform**: Code should work on macOS, Linux, and Windows where possible
+- **Interruptibility**: Any operation must be interruptible and respond to abort commands
+- **Concurrency**: Background operations should run concurrently to maintain UI responsiveness
+- **Non-blocking UI**: UI should never freeze even during long-running operations
+- **Task Management**: Proper cleanup of background tasks to prevent resource leaks
 
 ## UI Requirements
 - **Clean Status Bar**: No token usage debug output in terminal or status bar
@@ -50,6 +66,12 @@
 - **Efficient Screen Space**: Maximize content area without unnecessary borders/margins
 - **Error Messages**: Provide clear, user-friendly error messages with guidance
 - **Visual Consistency**: Maintain consistent visual styling across components
+- **Process Abortion**: Support immediate abortion of any running process with Escape key
+- **Exit Command**: Support exiting the TUI cleanly with Ctrl+D
+- **Background Indication**: Show clear visual indicators for background processes
+- **Operation Feedback**: Provide real-time feedback on long-running operations
+- **Abort Feedback**: Show clear visual confirmation when operations are aborted
+- **Continued Usage**: Allow continued app usage while background tasks are running
 
 ## AI Provider Requirements
 - **Provider Abstraction**: Support multiple AI providers through a common interface
@@ -65,6 +87,12 @@
 - **Command Robustness**: Commands should never crash the application
 - **Service Status**: Clearly indicate when services like Ollama are unavailable
 - **Low Overhead**: Fetching model information should not block the UI
+- **Process Control**: All API calls must be cancellable and properly handle timeouts
+- **Thread Safety**: All AI operations must be thread-safe using atomic operations
+- **Asynchronous Processing**: AI requests should be processed asynchronously
+- **Progress Updates**: Provide progress updates during long-running AI operations
+- **Timeout Handling**: Gracefully handle timeouts during API calls
+- **Memory Safety**: Ensure proper memory safety in concurrent contexts
 
 ## Configuration System
 - **Central Configuration**: All settings defined in a single location (~/.ai-coder/config.yaml)

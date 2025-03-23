@@ -97,7 +97,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     // Ensure input box is at least 3 lines tall and doesn't exceed 10 lines
     // (adjust the max as needed based on your preferences)
-    let input_height = (estimated_lines as u16).max(1).min(10) + 2; // Add 2 for border
+    let input_height = (estimated_lines as u16).clamp(1, 10) + 2; // Add 2 for border
 
     // Create the layout
     let chunks = Layout::default()
@@ -120,6 +120,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // Render context menu if active
     if app.show_context_menu {
         render_context_menu(f, app, accent, background, foreground);
+    }
+
+    // Render tasks popup if active
+    if app.show_tasks_popup {
+        components::render_tasks_popup(f, app, primary, accent, background);
     }
 }
 
@@ -182,8 +187,14 @@ fn render_output_area(f: &mut Frame, app: &App, area: Rect, bg_color: Color, fg_
         }
     } else {
         // Regular rendering without selection
-        let text = Text::from(app.output.clone());
+        // First ensure the output_lines are up to date with the output
+        // by converting the output string to lines
+        let output_text = app.output.clone();
+        // Convert to Text object
+        let text = Text::from(output_text);
+        // Get the lines
         let lines = text.lines.to_vec();
+        // Assign to styled_lines
         styled_lines = lines;
     }
 
@@ -354,6 +365,32 @@ fn render_status_bar(
         Span::raw(" "),
         Span::raw(format!("🧮 {} cmds ", app.stats.command_count)),
     ];
+
+    // Add active tasks indicator if any
+    let active_tasks = app.get_active_tasks();
+    if !active_tasks.is_empty() {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            format!(" ⚙️ {} active ", active_tasks.len()),
+            Style::default().bg(Color::Blue).fg(Color::White),
+        ));
+
+        // If there's a running task with progress, show it
+        if let Some(task) = active_tasks
+            .iter()
+            .find(|t| t.status == crate::ai::types::TaskStatus::Running)
+        {
+            if let Some(progress) = &task.progress {
+                if let Some(percent) = progress.completion_percent {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(
+                        format!(" {:.1}% ", percent),
+                        Style::default().bg(Color::Green).fg(Color::Black),
+                    ));
+                }
+            }
+        }
+    }
 
     // Add text selection indicator if applicable
     if app.is_selecting_text {

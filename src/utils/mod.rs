@@ -4,9 +4,11 @@
 
 mod format;
 mod logging;
+pub mod tasks;
 
 pub use format::*;
 pub use logging::*;
+pub use tasks::{Task, TaskId, TaskManager, TaskType};
 
 use chrono::Local;
 use ratatui::style::Color;

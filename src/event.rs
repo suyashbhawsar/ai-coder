@@ -22,6 +22,7 @@ pub enum Event {
     Copy, // Event for text copy operation
     ScrollUp,
     ScrollDown,
+    Abort, // Event for aborting any running process
 }
 
 pub struct EventHandler {
@@ -57,7 +58,7 @@ impl EventHandler {
                     if event::poll(timeout).expect("Failed to poll new events") {
                         match event::read().expect("Unable to read event") {
                             CrosstermEvent::Key(e) => {
-                                // Handle scroll keys
+                                // Handle scroll keys and abort keys
                                 match e.code {
                                     KeyCode::PageUp => {
                                         if let Err(err) = sender.send(Event::ScrollUp) {
@@ -70,6 +71,41 @@ impl EventHandler {
                                             eprintln!("Error sending scroll down event: {}", err);
                                             break;
                                         }
+                                    }
+                                    // Escape key for abort - send abort event
+                                    KeyCode::Esc => {
+                                        // Since abort is critical, make sure it's the only event we send
+                                        if let Err(err) = sender.send(Event::Abort) {
+                                            eprintln!("Error sending abort event: {}", err);
+                                            break;
+                                        }
+                                    }
+                                    // Ctrl+C for abort - direct abort
+                                    KeyCode::Char('c')
+                                        if e.modifiers
+                                            .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                                    {
+                                        use std::process;
+
+                                        // Display abort message on stdout
+                                        println!("\n\n[EMERGENCY ABORT: CTRL+C PRESSED]\n\n");
+
+                                        // Terminate the entire process immediately
+                                        // This is a last resort but will always work
+                                        process::exit(130); // 130 is UNIX code for Ctrl+C
+                                    }
+                                    // Ctrl+D for clean exit
+                                    KeyCode::Char('d')
+                                        if e.modifiers
+                                            .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                                    {
+                                        use std::process;
+
+                                        // Display exit message on stdout
+                                        println!("\n\n[EXITING: CTRL+D PRESSED]\n\n");
+
+                                        // Terminate the process with clean exit code
+                                        process::exit(0);
                                     }
                                     _ => {
                                         if let Err(err) = sender.send(Event::Key(e)) {

@@ -67,6 +67,9 @@ fn is_command_safe(command: &str) -> bool {
 
 /// Handle execution of a bash command
 pub fn handle_bash_command(command: &str) -> HandlerResult<String> {
+    // At the beginning of this function, we could add an abort check
+    // But since it's not running in an async context, we'll handle abort
+    // in the calling functions
     let command = command.trim();
 
     if command.is_empty() {

@@ -84,6 +84,10 @@ pub enum AIError {
     /// Internal server errors
     #[error("Internal server error: {0}")]
     ServerError(String),
+
+    /// Operation cancelled by user
+    #[error("Operation cancelled: {0}")]
+    Cancelled(String),
 }
 
 /// Response from an AI completion request
@@ -97,6 +101,11 @@ pub struct AIResponse {
 
     /// Token usage information
     pub usage: TokenUsage,
+
+    /// Optional progress statistics
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub progress: Option<ProgressStats>,
 }
 
 /// Token usage statistics
@@ -156,6 +165,143 @@ impl SessionStats {
     /// Get total tokens used in the session
     pub fn total_tokens(&self) -> usize {
         self.total_prompt_tokens + self.total_completion_tokens
+    }
+}
+
+/// Status of a background task
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskStatus {
+    /// Task is waiting to start
+    Pending,
+    /// Task is currently running
+    Running,
+    /// Task has completed successfully
+    Completed,
+    /// Task has failed
+    Failed,
+    /// Task was cancelled by the user
+    Cancelled,
+}
+
+impl std::fmt::Display for TaskStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TaskStatus::Pending => write!(f, "Pending"),
+            TaskStatus::Running => write!(f, "Running"),
+            TaskStatus::Completed => write!(f, "Completed"),
+            TaskStatus::Failed => write!(f, "Failed"),
+            TaskStatus::Cancelled => write!(f, "Cancelled"),
+        }
+    }
+}
+
+/// Progress statistics for tracking task execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProgressStats {
+    /// Total number of tokens generated so far
+    pub tokens_generated: usize,
+
+    /// Estimated total tokens that will be generated
+    pub estimated_total_tokens: Option<usize>,
+
+    /// Start time of the task
+    pub start_time: chrono::DateTime<chrono::Utc>,
+
+    /// Last update time
+    pub last_update: chrono::DateTime<chrono::Utc>,
+
+    /// Generation rate in tokens per second
+    pub tokens_per_second: f64,
+
+    /// Estimated completion percentage (0-100)
+    pub completion_percent: Option<f64>,
+}
+
+impl Default for ProgressStats {
+    fn default() -> Self {
+        Self {
+            tokens_generated: 0,
+            estimated_total_tokens: None,
+            start_time: chrono::Utc::now(),
+            last_update: chrono::Utc::now(),
+            tokens_per_second: 0.0,
+            completion_percent: None,
+        }
+    }
+}
+
+impl ProgressStats {
+    /// Create a new progress stats instance
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Update progress with new token count
+    pub fn update(&mut self, tokens_generated: usize) {
+        let now = chrono::Utc::now();
+        let elapsed = (now - self.last_update).num_milliseconds() as f64 / 1000.0;
+
+        // Only update rate if some time has passed
+        if elapsed > 0.01 {
+            let new_tokens = tokens_generated.saturating_sub(self.tokens_generated) as f64;
+            let instant_rate = new_tokens / elapsed;
+
+            // Exponential moving average for tokens_per_second (alpha = 0.3)
+            if self.tokens_per_second > 0.0 {
+                self.tokens_per_second = 0.7 * self.tokens_per_second + 0.3 * instant_rate;
+            } else {
+                self.tokens_per_second = instant_rate;
+            }
+
+            self.tokens_generated = tokens_generated;
+            self.last_update = now;
+
+            // Update completion percentage if we have an estimate
+            if let Some(total) = self.estimated_total_tokens {
+                if total > 0 {
+                    let percent = (tokens_generated as f64 / total as f64) * 100.0;
+                    self.completion_percent = Some(percent.min(99.9)); // Cap at 99.9% until fully complete
+                }
+            }
+        }
+    }
+
+    /// Mark the task as completed
+    pub fn complete(&mut self) {
+        self.completion_percent = Some(100.0);
+    }
+
+    /// Estimate time remaining in seconds
+    pub fn estimate_remaining_seconds(&self) -> Option<f64> {
+        if self.tokens_per_second <= 0.0 {
+            return None;
+        }
+
+        if let Some(total) = self.estimated_total_tokens {
+            let remaining_tokens = total.saturating_sub(self.tokens_generated) as f64;
+            Some(remaining_tokens / self.tokens_per_second)
+        } else {
+            None
+        }
+    }
+
+    /// Get formatted time string for estimated completion
+    pub fn format_remaining_time(&self) -> String {
+        if let Some(seconds) = self.estimate_remaining_seconds() {
+            if seconds < 1.0 {
+                return "< 1 sec".to_string();
+            } else if seconds < 60.0 {
+                return format!("{:.0} sec", seconds);
+            } else if seconds < 3600.0 {
+                let minutes = (seconds / 60.0).ceil();
+                return format!("{:.0} min", minutes);
+            } else {
+                let hours = (seconds / 3600.0).ceil();
+                return format!("{:.0} hrs", hours);
+            }
+        }
+
+        "unknown".to_string()
     }
 }
 

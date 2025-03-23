@@ -10,18 +10,36 @@
 //! - Customizable UI
 //! - Multiple AI provider support
 //! - Token tracking and cost estimation
+//! - Process abortion with Escape key
+//! - Non-blocking concurrent operations
+//! - Thread-safe API interactions
+//! - Real-time progress indication
+//! - Background task management
 //!
 //! # Architecture
 //!
 //! The application is organized into several key modules:
-//! - `ai` - AI client implementations
-//! - `app` - Core application state and logic
-//! - `config` - Configuration management
-//! - `event` - Event handling
-//! - `handlers` - Command execution and handling
-//! - `tui` - Terminal interface
-//! - `ui` - UI rendering
-//! - `utils` - Utility functions
+//! - `ai` - AI client implementations with thread-safe interfaces
+//! - `app` - Core application state and concurrent task management
+//! - `config` - Configuration management with runtime updates
+//! - `event` - Event handling with abort signal support
+//! - `handlers` - Command execution in background tasks
+//! - `tui` - Terminal interface with non-blocking rendering
+//! - `ui` - UI rendering with progress indicators
+//! - `utils` - Utility functions and logging
+//!
+//! # Concurrency Model
+//!
+//! The application uses a modern, robust concurrency architecture:
+//!
+//! - **Tokio Runtime**: Asynchronous execution with tokio::select for handling multiple event sources
+//! - **Thread Safety**: Arc<AtomicBool> for cross-thread abort flags
+//! - **Background Tasks**: Long-running operations execute in tokio tasks
+//! - **Task Management**: Automatic cleanup of completed background tasks
+//! - **Non-blocking UI**: Event loop never blocks on IO operations
+//! - **Channel Communication**: MPSC channels for UI updates from background tasks
+//! - **Progress Indication**: Spinner animation with thread-safe updates
+//! - **Error Propagation**: Proper error handling across thread boundaries
 
 pub mod ai;
 pub mod app;
@@ -53,6 +71,9 @@ pub fn init() -> anyhow::Result<()> {
 pub fn cleanup() -> anyhow::Result<()> {
     // Close logging
     utils::close_logging()?;
+
+    // Any outstanding background tasks will be automatically aborted
+    // when the tokio runtime is dropped as the program exits
 
     Ok(())
 }

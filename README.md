@@ -18,6 +18,17 @@ A terminal user interface (TUI) for interacting with large language models direc
 - Modular configuration system
 - Resilient error handling
 - Logging support
+- Process abortion with Escape key
+- Non-blocking, concurrent operation for AI requests
+- Responsive UI that never freezes
+- Background task management
+- Real-time progress indication with spinner
+- Graceful timeout handling
+- Thread-safe API interaction
+- Minimalist, clean output design
+- Optimized whitespace management
+- Consistent UI formatting and spacing
+- Efficient screen space utilization
 
 ## Installation
 
@@ -48,9 +59,11 @@ cargo run --release
 
 - **Up/Down Arrow**: Navigate command history
 - **Shift+Up/Down**: Select text in output area
-- **Ctrl+C**: Copy selected text (in selection mode) or exit
+- **Ctrl+C**: Copy selected text (in selection mode) or emergency abort
+- **Ctrl+D**: Exit application cleanly
 - **PageUp/Down**: Scroll output
-- **Esc**: Cancel text selection or clear input
+- **Esc**: Abort current operation, cancel text selection, or clear input
+- **Shift+Enter**: Add a new line in the input box
 
 ### Command Prefixes
 
@@ -145,15 +158,41 @@ log_file: "ai-coder.log"
   - `src/ai/factory.rs`: Factory pattern for client creation
   - `src/ai/ollama.rs`: Ollama-specific client implementation
 - `src/app`: Core application state and logic
-  - `src/app/ai_handler.rs`: AI service integration
+  - `src/app/ai_handler.rs`: AI service integration with concurrent processing
 - `src/config`: Configuration management with provider-specific settings
-- `src/event`: Event handling and input processing
+- `src/event`: Event handling and input processing with abort signals
 - `src/handlers`: Command execution and handling
   - `src/handlers/command.rs`: Built-in command implementation
   - `src/handlers/bash.rs`: Shell command execution
 - `src/tui`: Terminal interface and rendering
-- `src/ui`: UI components and layout
+- `src/ui`: UI components and layout with progress indicators
 - `src/utils`: Utility functions and helpers
+  - `src/utils/tasks.rs`: Background task management system
+- `src/main.rs`: Application entry point with concurrent event loop
+
+### Concurrency Model
+
+The application uses a modern concurrent architecture:
+
+- **tokio::select!** for non-blocking event handling
+- **Arc<AtomicBool>** for thread-safe abort flags
+- **Background Tasks** run independently without blocking the UI
+- **Task Cleanup** to prevent resource leaks
+- **Channel-based Communication** between UI and background tasks
+- **Optimized Event Loop** that maintains UI responsiveness
+- **Spinner Animation** providing real-time progress feedback
+
+### UI Design Philosophy
+
+The interface follows a minimalist design approach:
+
+- **Clean Output**: No debug messages or task status clutter
+- **Efficient Space**: Minimal whitespace and compact separators
+- **Consistent Formatting**: Single newline between input and output
+- **Automated Cleanup**: Spinner removal and whitespace management
+- **Responsive Layout**: Adapts to terminal size with proper text wrapping
+- **Visual Clarity**: Clear command input and response separation
+- **Progress Indication**: Non-intrusive spinner animation during processing
 
 ### Running Tests
 

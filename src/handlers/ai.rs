@@ -331,7 +331,7 @@ impl AIHandler {
                     result.push_str(&format!("⚠️ Error executing command: {}\n", e));
                 }
             }
-            result.push_str("\n");
+            result.push('\n');
         }
 
         Ok(result)

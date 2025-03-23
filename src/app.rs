@@ -1,3 +1,5 @@
+//! Main application state and event handling
+
 use crate::handlers::{bash, command};
 use anyhow::Result;
 use chrono::{DateTime, Local};
@@ -7,14 +9,15 @@ use std::collections::VecDeque;
 use std::env;
 use std::io;
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use crate::event::Event;
 use crate::handlers::CommandMode;
 use crate::tui::Tui;
 use crate::ui;
-use crate::utils::Colors;
+use crate::utils::{Colors, TaskManager};
 
 mod ai_handler;
 use ai_handler::AIHandler;
@@ -109,6 +112,13 @@ pub struct App {
     pub is_scrolling: bool, // Track when scrolling is in progress
     pub ai_handler: AIHandler,
     pub spinner_rx: Option<mpsc::Receiver<(String, usize)>>, // Receiver for spinner updates
+    pub abort_requested: Arc<AtomicBool>, // Atomic flag to indicate if abort was requested
+    pub global_abort: Option<Arc<AtomicBool>>, // Global atomic abort flag
+    pub ui_notifier: Option<tokio::sync::mpsc::Sender<()>>, // Channel to request UI updates
+    pub background_tasks: Vec<tokio::task::JoinHandle<()>>, // Track background tasks
+    pub task_manager: TaskManager, // Manager for background tasks
+    pub show_tasks_popup: bool, // Whether to show the tasks popup
+    pub last_cleanup_time: Option<Instant>, // Last time task cleanup was performed
 }
 
 impl Default for App {
@@ -143,6 +153,13 @@ impl Default for App {
             is_scrolling: false, // Initialize scrolling state
             ai_handler: AIHandler::new(),
             spinner_rx: None, // Initialize spinner receiver as None
+            abort_requested: Arc::new(AtomicBool::new(false)), // Initialize abort flag as false
+            global_abort: None, // Initialize global abort flag as None,
+            ui_notifier: None, // Will be set after construction
+            background_tasks: Vec::new(), // Start with no background tasks
+            task_manager: TaskManager::new(), // Initialize task manager
+            show_tasks_popup: false, // Don't show tasks popup by default
+            last_cleanup_time: None, // Initialize cleanup timer to None
         }
     }
 }
@@ -151,20 +168,37 @@ impl App {
     pub fn new() -> Self {
         Self::default()
     }
+    
+    pub fn set_global_abort(&mut self, abort_flag: Arc<AtomicBool>) {
+        self.global_abort = Some(abort_flag);
+    }
+    
+    pub fn is_abort_requested(&self) -> bool {
+        self.abort_requested.load(std::sync::atomic::Ordering::SeqCst) || 
+        self.global_abort.as_ref().is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
+    }
 
     pub fn add_output(&mut self, text: String) {
-        // Ensure the text ends with a newline
+        // Process the text based on whether it ends with a newline
         let text = if text.ends_with('\n') {
             text
         } else {
+            // Only add a single newline if needed
             text + "\n"
         };
+        
+        // Add the text to the output string
         self.output.push_str(&text);
 
         // Update output_lines for text selection and copying
+        // Split by newline to get individual lines
         let new_lines: Vec<String> = text.lines().map(|s| s.to_string()).collect();
+        
+        // Add each line to our output_lines vector
         self.output_lines.extend(new_lines);
-        if text.ends_with('\n') && !text.is_empty() {
+        
+        // Only add an empty line if absolutely needed for empty lines
+        if text.ends_with('\n') && text.trim().is_empty() {
             self.output_lines.push(String::new());
         }
     }
@@ -186,14 +220,19 @@ impl App {
     }
 
     pub async fn execute_command(&mut self, command: String, tui: &mut Tui) {
+        // Clean up any excessive newlines at the end of the current output
+        while self.output.ends_with("\n\n") {
+            self.output.pop();
+        }
+        
         // Add command to history
         self.history.add(command.clone());
 
         // Detect mode and get processed command
         let (mode, cmd) = self.detect_mode(&command);
 
-        // Add a distinctive separator between different commands
-        self.add_output("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n".to_string());
+        // Add a separator between commands (more compact)
+        self.add_output("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n".to_string());
 
         // Always format and display the command first, before any processing happens
         match mode {
@@ -264,68 +303,182 @@ impl App {
                 self.stats.command_count += 1;
             }
             CommandMode::AI => {
-                // Add a space for the spinner indicator (no extra newline)
-                self.add_output(" ".to_string());
+                // Add a minimal spinner indicator with no extra space
+                self.add_output("".to_string());
 
-                // Immediately refresh UI to show the space for the spinner
+                // Immediately refresh UI
                 if let Err(e) = tui.immediate_refresh(|f| {
                     ui::render(f, self);
                 }) {
                     eprintln!("Failed to refresh UI: {}", e);
                 }
 
-                // Start spinner animation
+                // Create a new channel for spinner animation
                 let (tx, rx) = mpsc::channel();
                 self.spinner_rx = Some(rx);
-
-                // Spawn spinner task
+                
+                // Determine the line index for the spinner (the last line in output_lines)
+                let spinner_line_index = self.output_lines.len() - 1;
+                
+                // Save a reference to our global abort flag for the spinner task
+                let global_abort_clone = self.global_abort.clone();
+                
+                // Spawn spinner task with proper line index and abort checking
                 let spinner_task = tokio::spawn(async move {
                     let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
                     let mut frame = 0;
+                    
                     loop {
-                        if tx.send((spinner_frames[frame].to_string(), frame)).is_err() {
+                        // Check if we should abort
+                        let should_abort = global_abort_clone
+                            .as_ref()
+                            .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst));
+                            
+                        if should_abort {
                             break;
                         }
+                        
+                        // Send both the spinner frame and its line index
+                        if tx.send((spinner_frames[frame].to_string(), spinner_line_index)).is_err() {
+                            break;
+                        }
+                        
                         frame = (frame + 1) % spinner_frames.len();
                         tokio::time::sleep(Duration::from_millis(80)).await;
                     }
                 });
 
-                // Generate AI response
-                match self.ai_handler.generate(&cmd).await {
-                    Ok(response) => {
-                        // Stop spinner
-                        spinner_task.abort();
-                        self.spinner_rx = None;
-
-                        // Add a newline after the spinner space
-                        self.add_output("\n".to_string());
-
-                        // Add the processed response
-                        self.add_output(response.content);
-
-                        // Update stats
-                        self.stats.ai_count += 1;
-                        self.stats.prompt_tokens += response.usage.prompt_tokens;
-                        self.stats.completion_tokens += response.usage.completion_tokens;
-                        self.stats.total_tokens += response.usage.total_tokens;
-
-                        // Calculate and update cost
-                        let costs = self.ai_handler.get_model_costs(&response.model).await;
-                        self.stats.cost += costs.calculate_cost(&response.usage);
-                    }
-                    Err(e) => {
-                        // Stop spinner
-                        spinner_task.abort();
-                        self.spinner_rx = None;
-
-                        // Add a newline after the spinner space
-                        self.add_output("\n".to_string());
-
-                        // Add error message
-                        self.add_output(format!("Error: {}\n", e));
-                    }
+                // Reset abort flags before starting
+                self.abort_requested.store(false, std::sync::atomic::Ordering::SeqCst);
+                if let Some(global_abort) = &self.global_abort {
+                    global_abort.store(false, std::sync::atomic::Ordering::SeqCst);
                 }
+
+                // Get shared references to what we need for the task 
+                let abort_flag = self.abort_requested.clone();
+                let global_abort_clone = self.global_abort.clone();
+                let cmd_clone = cmd.clone();
+                let ai_handler_clone = self.ai_handler.clone();
+                let ui_tx = self.ui_notifier.clone();
+                
+                // Create a task in the task manager
+                let task_id = self.task_manager.create_task(
+                    format!("AI: {}", cmd.chars().take(30).collect::<String>()),
+                    crate::utils::tasks::TaskType::AIGeneration
+                );
+                
+                // Mark task as running
+                self.task_manager.update_task_status(task_id, crate::ai::types::TaskStatus::Running);
+                
+                // Create a task progress update channel
+                let task_manager = self.task_manager.clone();
+                
+                // Use a truly concurrent approach by spawning the AI generation in a separate task
+                let ai_task = tokio::spawn(async move {
+                    // We'll use the atomic abort flag for thread-safe cancellation
+                    
+                    // Run the AI generation with a timeout to prevent hanging
+                    let result = tokio::time::timeout(
+                        std::time::Duration::from_secs(120), // Increase timeout for larger models
+                        ai_handler_clone.generate(&cmd_clone, abort_flag, global_abort_clone)
+                    ).await;
+                    
+                    // Update task status based on result
+                    match &result {
+                        Ok(Ok(response)) => {
+                            // If the response has progress stats, update the task
+                            if let Some(progress) = &response.progress {
+                                task_manager
+                                    .update_task_progress(task_id, progress.tokens_generated);
+                            }
+                            task_manager.update_task_status(
+                                task_id,
+                                crate::ai::types::TaskStatus::Completed,
+                            );
+                        }
+                        Ok(Err(e)) => {
+                            if let crate::ai::AIError::Cancelled(_) = e {
+                                task_manager.update_task_status(
+                                    task_id,
+                                    crate::ai::types::TaskStatus::Cancelled,
+                                );
+                            } else {
+                                task_manager.update_task_status(
+                                    task_id,
+                                    crate::ai::types::TaskStatus::Failed,
+                                );
+                            }
+                        }
+                        Err(_) => {
+                            task_manager
+                                .update_task_status(task_id, crate::ai::types::TaskStatus::Failed);
+                        }
+                    }
+
+                    // Notify the UI thread that an update is needed
+                    if let Some(tx) = ui_tx {
+                        let _ = tx.send(()).await;
+                    }
+
+                    result
+                });
+
+                // Create a channel to send the response back to the main thread
+                let (response_tx, response_rx) = tokio::sync::mpsc::channel::<Option<String>>(1);
+                
+                // Store the receiver for later use
+                self.task_manager.set_response_channel(task_id, response_rx);
+                
+                // We'll save the result handling in a separate task to avoid blocking
+                let ui_tx_clone = self.ui_notifier.clone();
+                let result_handler = tokio::spawn(async move {
+                    // Await the AI task result
+                    let result = ai_task.await;
+                    
+                    // Process the result to get the AI response content
+                    let response_content = match result {
+                        Ok(Ok(response)) => {
+                            // If we have a successful response, extract the content
+                            if let Ok(ai_response) = response {
+                                // Quietly return the content without debug messages
+                                Some(ai_response.content)
+                            } else {
+                                None
+                            }
+                        }
+                        _ => {
+                            None
+                        }
+                    };
+                    
+                    // Send the response content back to the main thread
+                    let _ = response_tx.send(response_content).await;
+                    
+                    // Notify the UI thread that we have a result
+                    if let Some(tx) = ui_tx_clone {
+                        let _ = tx.send(()).await;
+                    }
+                });
+
+                // Store the task in our background tasks
+                self.background_tasks.push(result_handler);
+
+                // No processing indicator, keep output minimal
+
+                // Set up spinner cleanup when AI task completes
+                let ui_tx_clone = self.ui_notifier.clone();
+                tokio::spawn(async move {
+                    // Give the task some time to run
+                    tokio::time::sleep(Duration::from_secs(120)).await;
+                    
+                    // Abort the spinner task
+                    spinner_task.abort();
+                    
+                    // Notify UI thread that we should refresh
+                    if let Some(tx) = ui_tx_clone {
+                        let _ = tx.send(()).await;
+                    }
+                });
             }
         }
 
@@ -561,6 +714,77 @@ impl App {
         self.native_selection_mode = !self.native_selection_mode;
         Ok(())
     }
+    
+    /// Toggle the task popup visibility
+    pub fn toggle_tasks_popup(&mut self) {
+        self.show_tasks_popup = !self.show_tasks_popup;
+    }
+    
+    /// Get active tasks for display
+    pub fn get_active_tasks(&self) -> Vec<crate::utils::tasks::Task> {
+        self.task_manager.active_tasks()
+    }
+    
+    /// Get recent completed tasks
+    pub fn get_recent_tasks(&self) -> Vec<crate::utils::tasks::Task> {
+        self.task_manager.recent_tasks()
+    }
+    
+    /// Check if the cleanup timer has been initialized
+    pub fn has_cleanup_timer(&self) -> bool {
+        self.last_cleanup_time.is_some()
+    }
+    
+    /// Initialize the cleanup timer
+    pub fn init_cleanup_timer(&mut self) {
+        self.last_cleanup_time = Some(Instant::now());
+    }
+    
+    /// Check if we should perform a cleanup based on time elapsed
+    pub fn should_perform_cleanup(&self) -> bool {
+        match self.last_cleanup_time {
+            Some(last_time) => {
+                let now = Instant::now();
+                now.duration_since(last_time).as_secs() > 60 // Cleanup every minute
+            }
+            None => false,
+        }
+    }
+    
+    /// Reset the cleanup timer
+    pub fn reset_cleanup_timer(&mut self) {
+        self.last_cleanup_time = Some(Instant::now());
+    }
+    
+    /// Cancel a task by ID
+    pub fn cancel_task(&mut self, id: crate::utils::tasks::TaskId) -> bool {
+        // Get the task first to determine if it's still active
+        let task_opt = self.task_manager.get_task(id);
+        
+        if let Some(task) = task_opt {
+            // Only try to cancel if the task is active
+            if task.status == crate::ai::types::TaskStatus::Running || 
+               task.status == crate::ai::types::TaskStatus::Pending {
+                
+                // For cancellable background tasks like AI generation
+                if task.task_type == crate::utils::tasks::TaskType::AIGeneration {
+                    // Set abort flags to stop any running AI operations
+                    self.abort_requested.store(true, std::sync::atomic::Ordering::SeqCst);
+                    if let Some(global_abort) = &self.global_abort {
+                        global_abort.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    
+                    // Add a message to the output indicating cancellation was requested
+                    self.add_output(format!("\n[Task {}] Cancellation requested.\n", id.short()));
+                }
+                
+                // Mark the task as cancelled in the task manager
+                return self.task_manager.cancel_task(id);
+            }
+        }
+        
+        false // Task doesn't exist or is already completed
+    }
 
     // Get formatted session cost information for the /cost command
     pub fn get_session_cost_info(&self) -> String {
@@ -625,11 +849,16 @@ impl App {
                     self.output_lines[line_index] = frame;
 
                     // Rebuild the output string to reflect the spinner update
-                    self.output = self.output_lines.join("\n");
-                    if !self.output.is_empty() {
-                        self.output.push('\n');
+                    // Make sure we use the entire output_lines vector
+                    let mut rebuilt_output = String::new();
+                    for (i, line) in self.output_lines.iter().enumerate() {
+                        rebuilt_output.push_str(line);
+                        if i < self.output_lines.len() - 1 || !self.output.ends_with('\n') {
+                            rebuilt_output.push('\n');
+                        }
                     }
-
+                    self.output = rebuilt_output;
+                    
                     updated = true;
                 }
             }
@@ -644,6 +873,36 @@ impl App {
     pub async fn handle_events(&mut self, tui: &mut Tui) -> Result<()> {
         if let Ok(event) = tui.events().next() {
             match event {
+                Event::Abort => {
+                    // Set both the local and global abort flags immediately
+                    self.abort_requested.store(true, std::sync::atomic::Ordering::SeqCst);
+                    if let Some(global_abort) = &self.global_abort {
+                        // Use SeqCst ordering to ensure all threads see this change immediately
+                        global_abort.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    
+                    // Cancel any ongoing operations
+                    // Always show abort message in output area (but avoid duplicates)
+                    if !self.output.contains("[Operation Aborted]") {
+                        self.add_output("\n[Operation Aborted] ❌ Cancellation requested. Processing should stop momentarily.\n".to_string());
+                    }
+                    
+                    // Cancel spinner if it exists - this is critical for releasing resources
+                    if self.spinner_rx.is_some() {
+                        if let Some(handle) = self.spinner_rx.take() {
+                            // Explicitly drop the channel to ensure the spinner task terminates
+                            drop(handle);
+                        }
+                    }
+                    
+                    // Reset state that may be affected
+                    self.is_scrolling = false;
+                    
+                    // Force immediate UI refresh to show abort message
+                    tui.immediate_refresh(|f| {
+                        ui::render(f, self);
+                    }).ok();
+                }
                 Event::Tick => {
                     // Update cursor blink state
                     self.update_cursor_blink();
@@ -689,15 +948,31 @@ impl App {
                             KeyCode::Char('c')
                                 if key_event.modifiers.contains(KeyModifiers::CONTROL) =>
                             {
-                                if self.is_selecting_text {
-                                    self.copy_selected_text();
-                                } else {
-                                    self.running = false;
+                                // Handle task cancellation in tasks popup view
+                                if self.show_tasks_popup {
+                                    // Get the first active task and cancel it
+                                    let active_tasks = self.get_active_tasks();
+                                    if !active_tasks.is_empty() {
+                                        // Cancel the most recent active task
+                                        let task_id = active_tasks[0].id;
+                                        if self.cancel_task(task_id) {
+                                            self.add_output(format!("\nCancelling task {}...\n", task_id.short()));
+                                        }
+                                    }
                                 }
+                                // Handle text selection copy
+                                else if self.is_selecting_text {
+                                    self.copy_selected_text();
+                                }
+                                // Otherwise abort is handled in Event::Abort handler
                             }
                             // Context menu key
                             KeyCode::Char('k') if key_event.modifiers == KeyModifiers::CONTROL => {
                                 self.show_context_menu(10, 10); // Show context menu at center
+                            }
+                            // Show tasks popup with Ctrl+T
+                            KeyCode::Char('t') if key_event.modifiers == KeyModifiers::CONTROL => {
+                                self.toggle_tasks_popup();
                             }
                             // Start text selection with Shift+Up/Down
                             KeyCode::Up if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
@@ -788,7 +1063,10 @@ impl App {
                                 self.last_cursor_toggle = Instant::now();
                             }
                             KeyCode::Esc => {
-                                if self.is_selecting_text {
+                                // Handle local functions only, the abort is handled at the Event::Abort level
+                                if self.show_tasks_popup {
+                                    self.show_tasks_popup = false;
+                                } else if self.is_selecting_text {
                                     self.cancel_text_selection();
                                 } else {
                                     self.input.clear();

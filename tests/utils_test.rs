@@ -60,5 +60,9 @@ fn test_count_tokens() {
     // Checking that our simple algorithm provides expected ranges
     let sample = "Hello world, this is a test.";
     let token_count = count_tokens(sample);
-    assert!(token_count >= 5 && token_count <= 10, "Token count was: {}", token_count);
+    assert!(
+        token_count >= 5 && token_count <= 10,
+        "Token count was: {}",
+        token_count
+    );
 }
